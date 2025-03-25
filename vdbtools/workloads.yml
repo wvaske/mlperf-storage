@@ -1,0 +1,29 @@
+workloads:
+  - name: "Small dataset test"
+    dataset_size: 100000  # 100K vectors
+    query_size: 100       # 100 query vectors
+    search_params:
+    ef: 50
+
+  - name: "Large dataset test"
+    dataset_size: 1000000  # 1M vectors
+    query_size: 1000       # 1K query vectors
+    search_params:
+    ef: 200
+
+
+  - name: "OpenAI Small Dataset"
+    collection_name: "openai_small"
+    dimension: 1536
+    dataset_path: "openai_embeddings_small.npy"
+    query_size: 100
+    search_params:
+    ef: 50
+
+  - name: "OpenAI Large Dataset"
+    collection_name: "openai_large"
+    dimension: 1536
+    dataset_path: "openai_embeddings_large.npy"
+    query_size: 1000
+    search_params:
+    ef: 200

@@ -1,0 +1,8 @@
+milvus:
+  host: "localhost"
+  port: 19530
+  collection_name: "diskann_test"
+  index_type: "DISKANN"
+  metric_type: "L2"
+  dim: 128
+
