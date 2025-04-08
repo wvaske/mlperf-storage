@@ -69,10 +69,10 @@ def monitor_progress(collection_name, interval=60, zero_threshold=300):
 
         # Track the phases
         indexing_phase_complete = initial_indexed_rows >= total_rows
-        pending_phase_complete = initial_pending_rows == 0
+        pending_phase_complete = False
         
         # Track time with zero pending rows
-        pending_zero_start_time = time.time() if initial_pending_rows == 0 else None
+        pending_zero_start_time = None
 
         while True:
             time.sleep(interval)  # Check at specified interval
@@ -178,13 +178,13 @@ def monitor_progress(collection_name, interval=60, zero_threshold=300):
                             # Handle zero pending rows case
                             if pending_zero_start_time is None:
                                 pending_zero_start_time = current_time
-                                logging.info(f"No pending rows detected. Starting {zero_threshold//60}-minute confirmation timer.")
+                                logging.info(f"No pending rows detected. Starting {zero_threshold}-second confirmation timer.")
                             else:
                                 zero_pending_time = current_time - pending_zero_start_time
                                 logging.info(f"No pending rows for {zero_pending_time:.1f} seconds (waiting for {zero_threshold} seconds to confirm)")
                                 
                                 if zero_pending_time >= zero_threshold:
-                                    logging.info(f"No pending rows detected for {zero_threshold//60} minutes. Process is considered complete.")
+                                    logging.info(f"No pending rows detected for {zero_threshold} seconds. Process is considered complete.")
                                     pending_phase_complete = True
                 else:
                     # If no time has elapsed (first iteration)
