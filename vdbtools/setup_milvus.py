@@ -2,7 +2,9 @@ from pymilvus import connections, Collection, FieldSchema, CollectionSchema, Dat
 import numpy as np
 
 # Connect to Milvus
-connections.connect("default", host="localhost", port="19530", max_receive_message_length=514983574, max_send_message_length=514983574)
+connections.connect("default", host="127.0.0.1", port="19530", max_receive_message_length=514983574, max_send_message_length=514983574)
+# old_col = Collection("diskann_openai")
+# old_col.drop()
 
 # Create Collection Schema
 fields = [
@@ -13,7 +15,7 @@ schema = CollectionSchema(fields, "DiskANN Benchmark Collection")
 
 # Create Collection
 collection_name = "diskann_openai"
-collection = Collection(name=collection_name, schema=schema)
+collection = Collection(name=collection_name, schema=schema, num_shards=10)
 
 # Create DiskANN Index
 index_params = {
