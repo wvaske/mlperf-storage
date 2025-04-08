@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 def parse_args():
     parser = argparse.ArgumentParser(description="Vector Database Benchmark Tool")
     # Existing arguments
-    parser.add_argument("--host", type=str, default="localhost", help="Milvus server host")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Milvus server host")
     parser.add_argument("--port", type=str, default="19530", help="Milvus server port")
     parser.add_argument("--collection-name", type=str, default="benchmark_collection", help="Collection name")
     parser.add_argument("--dimension", type=int, default=1536, help="Vector dimension")
-    parser.add_argument("--num-vectors", type=int, default=1000000, help="Number of vectors to generate")
-    parser.add_argument("--distribution", type=str, default="normal", choices=["normal", "uniform"],
+    parser.add_argument("--num-vectors", type=int, default=100000, help="Number of vectors to generate")
+    parser.add_argument("--distribution", type=str, default="normal", choices=["normal", "uniform", "zipfian"],
                         help="Vector distribution")
-    parser.add_argument("--batch-size", type=int, default=10000, help="Batch size for insertion")
+    parser.add_argument("--batch-size", type=int, default=1000, help="Batch size for insertion")
     parser.add_argument("--num-shards", type=int, default=1, help="Number of shards for the collection")
     parser.add_argument("--monitor-interval", type=int, default=10,
                         help="Interval in seconds to check index building progress")
@@ -354,7 +354,8 @@ def main():
         collection_name=args.collection_name,
         dim=args.dimension,
         num_shards=args.num_shards,
-        vector_dtype=vector_dtype
+        vector_dtype=vector_dtype,
+        force=args.force
     )
 
     if collection is None:
