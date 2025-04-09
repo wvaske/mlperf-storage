@@ -240,18 +240,32 @@ def execute_batch_queries(
 def calculate_statistics(results_dir: str) -> Dict[str, float]:
     """Calculate statistics from benchmark results"""
     all_latencies = []
+    all_batch_times = []
+    file_start_times = []
+    file_end_times = []
     
     # Read all result files
     for file_path in Path(results_dir).glob("milvus_benchmark_*.jsonl"):
         with open(file_path, 'r') as f:
-            for line in f:
+            lines = f.readlines()
+            for i, line in enumerate(lines):
                 try:
                     data = json.loads(line)
                     if data["success"]:
+                        if i == 0:
+                            file_start_times.append(data["timestamp"])
+                        if i == len(lines) - 1:
+                            file_end_times.append(data["timestamp"] + data["batch_time_seconds"])
+
                         # Convert to milliseconds for readability
                         query_time_ms = data["avg_query_time_seconds"] * 1000
+                        start_time = data["timestamp"]
                         # Add each query in the batch individually
                         all_latencies.extend([query_time_ms] * data["batch_size"])
+                        
+                        # Store batch time in milliseconds
+                        batch_time_ms = data["batch_time_seconds"] * 1000
+                        all_batch_times.append(batch_time_ms)
                 except Exception as e:
                     print(f"Error parsing result file {file_path}: {e}")
     
@@ -260,11 +274,13 @@ def calculate_statistics(results_dir: str) -> Dict[str, float]:
     
     # Calculate statistics
     latencies = np.array(all_latencies)
+    batch_times = np.array(all_batch_times)
     total_queries = len(latencies)
-    total_time_seconds = sum(latencies) / 1000  # Convert back to seconds for throughput
+    total_time_seconds = max(file_end_times) - min(file_start_times)
     
     stats = {
         "total_queries": total_queries,
+        "total_time_seconds": total_time_seconds,
         "min_latency_ms": float(np.min(latencies)),
         "max_latency_ms": float(np.max(latencies)),
         "mean_latency_ms": float(np.mean(latencies)),
@@ -273,7 +289,18 @@ def calculate_statistics(results_dir: str) -> Dict[str, float]:
         "p99_latency_ms": float(np.percentile(latencies, 99)),
         "p999_latency_ms": float(np.percentile(latencies, 99.9)),
         "p9999_latency_ms": float(np.percentile(latencies, 99.99)),
-        "throughput_qps": float(total_queries / total_time_seconds) if total_time_seconds > 0 else 0
+        "throughput_qps": float(total_queries / total_time_seconds) if total_time_seconds > 0 else 0,
+        
+        # Batch time statistics
+        "batch_count": len(batch_times),
+        "min_batch_time_ms": float(np.min(batch_times)) if len(batch_times) > 0 else 0,
+        "max_batch_time_ms": float(np.max(batch_times)) if len(batch_times) > 0 else 0,
+        "mean_batch_time_ms": float(np.mean(batch_times)) if len(batch_times) > 0 else 0,
+        "median_batch_time_ms": float(np.median(batch_times)) if len(batch_times) > 0 else 0,
+        "p95_batch_time_ms": float(np.percentile(batch_times, 95)) if len(batch_times) > 0 else 0,
+        "p99_batch_time_ms": float(np.percentile(batch_times, 99)) if len(batch_times) > 0 else 0,
+        "p999_batch_time_ms": float(np.percentile(batch_times, 99.9)) if len(batch_times) > 0 else 0,
+        "p9999_batch_time_ms": float(np.percentile(batch_times, 99.99)) if len(batch_times) > 0 else 0
     }
     
     return stats
@@ -300,6 +327,7 @@ def main():
     # Output directory
     parser.add_argument("--output-dir", type=str, default="benchmark_results", 
                         help="Directory to save benchmark results")
+    parser.add_argument("--json-output", action="store_true", help="Print benchmark results as JSON document")
     
     args = parser.parse_args()
     
@@ -401,46 +429,95 @@ def main():
     print("\nCalculating benchmark statistics...")
     stats = calculate_statistics(results_dir)
     
-    # Save statistics to file
-    with open(os.path.join(results_dir, "statistics.json"), 'w') as f:
-        json.dump(stats, f, indent=2)
-    
-    # Print summary
-    print("\n" + "="*50)
-    print("BENCHMARK SUMMARY")
-    print("="*50)
-    print(f"Total Queries: {stats.get('total_queries', 0)}")
-    print(f"Mean Latency: {stats.get('mean_latency_ms', 0):.2f} ms")
-    print(f"Median Latency: {stats.get('median_latency_ms', 0):.2f} ms")
-    print(f"95th Percentile: {stats.get('p95_latency_ms', 0):.2f} ms")
-    print(f"99th Percentile: {stats.get('p99_latency_ms', 0):.2f} ms")
-    print(f"99.9th Percentile: {stats.get('p999_latency_ms', 0):.2f} ms")
-    print(f"Throughput: {stats.get('throughput_qps', 0):.2f} queries/second")
-    
-    # Print disk I/O statistics
-    print("\nDISK I/O DURING BENCHMARK")
-    print("-"*50)
+    # Add disk I/O statistics to the stats dictionary
     if disk_io_diff:
         # Calculate totals across all devices
         total_bytes_read = sum(dev_stats["bytes_read"] for dev_stats in disk_io_diff.values())
         total_bytes_written = sum(dev_stats["bytes_written"] for dev_stats in disk_io_diff.values())
         
-        print(f"Total Bytes Read: {format_bytes(total_bytes_read)}")
-        print(f"Total Bytes Written: {format_bytes(total_bytes_written)}")
-        print("\nPer-Device Breakdown:")
+        # Add disk I/O totals to stats
+        stats["disk_io"] = {
+            "total_bytes_read": total_bytes_read,
+            "total_bytes_read_per_sec": total_bytes_read / stats["total_time_seconds"],
+            "total_bytes_written": total_bytes_written,
+            "total_read_formatted": format_bytes(total_bytes_read),
+            "total_write_formatted": format_bytes(total_bytes_written),
+            "devices": {}
+        }
         
+        # Add per-device breakdown
         for device, io_stats in disk_io_diff.items():
             bytes_read = io_stats["bytes_read"]
             bytes_written = io_stats["bytes_written"]
-            if bytes_read > 0 or bytes_written > 0:  # Only show devices with activity
-                print(f"  {device}:")
-                print(f"    Read:  {format_bytes(bytes_read)}")
-                print(f"    Write: {format_bytes(bytes_written)}")
+            if bytes_read > 0 or bytes_written > 0:  # Only include devices with activity
+                stats["disk_io"]["devices"][device] = {
+                    "bytes_read": bytes_read,
+                    "bytes_written": bytes_written,
+                    "read_formatted": format_bytes(bytes_read),
+                    "write_formatted": format_bytes(bytes_written)
+                }
     else:
-        print("Disk I/O statistics not available")
+        stats["disk_io"] = {"error": "Disk I/O statistics not available"}
     
-    print("\nDetailed results saved to:", results_dir)
-    print("="*50)
+    # Save statistics to file
+    with open(os.path.join(results_dir, "statistics.json"), 'w') as f:
+        json.dump(stats, f, indent=2)
+
+    if args.json_output:
+        print("\nBenchmark statistics as JSON:")
+        print(json.dumps(stats))
+    else:
+        # Print summary
+        print("\n" + "="*50)
+        print("BENCHMARK SUMMARY")
+        print("="*50)
+        print(f"Total Queries: {stats.get('total_queries', 0)}")
+        print(f"Mean Latency: {stats.get('mean_latency_ms', 0):.2f} ms")
+        print(f"Median Latency: {stats.get('median_latency_ms', 0):.2f} ms")
+        print(f"95th Percentile: {stats.get('p95_latency_ms', 0):.2f} ms")
+        print(f"99th Percentile: {stats.get('p99_latency_ms', 0):.2f} ms")
+        print(f"99.9th Percentile: {stats.get('p999_latency_ms', 0):.2f} ms")
+        print(f"Throughput: {stats.get('throughput_qps', 0):.2f} queries/second")
+
+        # Print batch time statistics
+        print("\nBATCH STATISTICS")
+        print("-"*50)
+        print(f"Total Batches: {stats.get('batch_count', 0)}")
+        print(f"Mean Batch Time: {stats.get('mean_batch_time_ms', 0):.2f} ms")
+        print(f"Median Batch Time: {stats.get('median_batch_time_ms', 0):.2f} ms")
+        print(f"95th Percentile: {stats.get('p95_batch_time_ms', 0):.2f} ms")
+        print(f"99th Percentile: {stats.get('p99_batch_time_ms', 0):.2f} ms")
+        print(f"99.9th Percentile: {stats.get('p999_batch_time_ms', 0):.2f} ms")
+        print(f"Batch Throughput: {1000 / stats.get('mean_batch_time_ms', float('inf')):.2f} batches/second")
+
+        # Print disk I/O statistics
+        print("\nDISK I/O DURING BENCHMARK")
+        print("-"*50)
+        # Print disk I/O statistics
+        print("\nDISK I/O DURING BENCHMARK")
+        print("-"*50)
+        if disk_io_diff:
+            # Calculate totals across all devices
+            total_bytes_read = sum(dev_stats["bytes_read"] for dev_stats in disk_io_diff.values())
+            total_bytes_written = sum(dev_stats["bytes_written"] for dev_stats in disk_io_diff.values())
+
+            print(f"Total Bytes Read: {format_bytes(total_bytes_read)}")
+            print(f"Total Bytes Written: {format_bytes(total_bytes_written)}")
+            print("\nPer-Device Breakdown:")
+
+            for device, io_stats in disk_io_diff.items():
+                bytes_read = io_stats["bytes_read"]
+                bytes_written = io_stats["bytes_written"]
+                if bytes_read > 0 or bytes_written > 0:  # Only show devices with activity
+                    print(f"  {device}:")
+                    print(f"    Read:  {format_bytes(bytes_read)}")
+                    print(f"    Write: {format_bytes(bytes_written)}")
+        else:
+            print("Disk I/O statistics not available")
+
+        print("\nDetailed results saved to:", results_dir)
+        print("="*50)
+
 
 if __name__ == "__main__":
     main()
