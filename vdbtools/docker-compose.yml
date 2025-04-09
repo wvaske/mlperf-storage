@@ -49,7 +49,7 @@ services:
     volumes:
       - /mnt/nvme/vdb/milvus_data/db:/var/lib/milvus
       - /mnt/nvme/vdb/milvus_data/logs:/var/log/milvus
-      - /mnt/nvme/vdb/milvus_data/conf:/var/lib/milvus/conf
+      - /mnt/nvme/vdb/milvus_data/configs:/milvus/configs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s
