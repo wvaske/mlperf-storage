@@ -35,7 +35,7 @@ def parse_args():
     # Keep index_type and metric_type as CLI args
     parser.add_argument("--index-type", type=str, default="DISKANN", help="Index type")
     parser.add_argument("--metric-type", type=str, default="COSINE", help="Metric type (COSINE, L2, IP)")
-
+    parser.add_argument("--compact", action="store_true", help="Perform compaction before after vectors")
     # Add M and efConstruction as CLI args
     parser.add_argument("--M", type=int, default=64, help="DISKANN M parameter (graph degree)")
     parser.add_argument("--ef-construction", type=int, default=200, help="DISKANN efConstruction parameter")
@@ -164,7 +164,7 @@ def create_index(collection, index_params):
         logger.error(f"Failed to create index: {str(e)}")
         return False
 
-def monitor_index_building(collection_name, monitor_interval=60):
+def monitor_index_building(collection_name, monitor_interval=60, compact=False):
     """Monitor the progress of index building"""
     start_time = time.time()
 
@@ -243,7 +243,7 @@ def monitor_index_building(collection_name, monitor_interval=60):
                         logger.info(f"Initial indexing phase complete! All {indexed_rows:,} rows have been indexed.")
                         
                         # Perform compaction after indexing phase completes
-                        if not compaction_performed:
+                        if not compaction_performed and compact:
                             logger.info("Performing collection compaction...")
                             collection = Collection(name=collection_name)
                             collection.compact()
@@ -389,7 +389,7 @@ def main():
 
     # Monitor index building
     logger.info(f"Starting to monitor index building progress (checking every {args.monitor_interval} seconds)")
-    monitor_index_building(args.collection_name, args.monitor_interval)
+    monitor_index_building(args.collection_name, args.monitor_interval, args.compact)
 
     # Summary
     logger.info("Benchmark completed successfully!")
