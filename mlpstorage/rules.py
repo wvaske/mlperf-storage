@@ -1,13 +1,502 @@
+import abc
+import enum
 import os
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from pprint import pprint, pformat
-from typing import List, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 
 from mlpstorage.config import (MODELS, PARAM_VALIDATION, MAX_READ_THREADS_TRAINING, LLM_MODELS, BENCHMARK_TYPES,
-                               DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS)
+                               DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, HYDRA_OUTPUT_SUBDIR, BENCHMARK_TYPE)
 from mlpstorage.mlps_logging import setup_logging
 from mlpstorage.utils import is_valid_datetime_format
+
+
+class RuleState(enum.Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+    INVALID = "invalid"
+
+
+@dataclass
+class Issue:
+    validation: PARAM_VALIDATION
+    message: str
+    parameter: Optional[str] = None
+    expected: Optional[Any] = None
+    actual: Optional[Any] = None
+    severity: str = "error"
+    
+    def __str__(self):
+        result = f"[{self.severity.upper()}] {self.message}"
+        if self.parameter:
+            result += f" (Parameter: {self.parameter}"
+            if self.expected is not None and self.actual is not None:
+                result += f", Expected: {self.expected}, Actual: {self.actual}"
+            result += ")"
+        return result
+
+
+@dataclass
+class RunID:
+    program: str
+    command: str
+    subcommand: str
+    model: str
+    run_datetime: str
+
+    def __str__(self):
+        id_str = self.program
+        if self.command:
+            id_str += f"_{self.command}"
+        if self.subcommand:
+            id_str += f"_{self.subcommand}"
+        if self.model:
+            id_str += f"_{self.model}"
+        id_str += f"_{self.run_datetime}"
+        return id_str
+
+
+@dataclass
+class ProcessedRun:
+    run_id: RunID
+    benchmark_type: str
+    run_parameters: Dict[str, Any]
+    run_metrics: Dict[str, Any]
+    issues: List[Issue] = field(default_factory=list)
+    
+    def is_valid(self) -> bool:
+        """Check if the run is valid (no issues with INVALID validation)"""
+        return not any(issue.validation == PARAM_VALIDATION.INVALID for issue in self.issues)
+    
+    def is_closed(self) -> bool:
+        """Check if the run is valid for closed submission"""
+        if not self.is_valid():
+            return False
+        return all(issue.validation != PARAM_VALIDATION.OPEN for issue in self.issues)
+
+
+@dataclass
+class HostMemoryInfo:
+    """Detailed memory information for a host"""
+    total: int  # Total physical memory in bytes
+    available: Optional[int]  # Memory available for allocation
+    used: Optional[int]  # Memory currently in use
+    free: Optional[int]  # Memory not being used
+    active: Optional[int]  # Memory actively used
+    inactive: Optional[int]  # Memory marked as inactive
+    buffers: Optional[int]  # Memory used for buffers
+    cached: Optional[int]  # Memory used for caching
+    shared: Optional[int]  # Memory shared between processes
+
+    @classmethod
+    def from_psutil_dict(cls, data: Dict[str, int]) -> 'HostMemoryInfo':
+        """Create a HostMemoryInfo instance from a dictionary"""
+        return cls(
+            total=data.get('total', 0),
+            available=data.get('available', 0),
+            used=data.get('used', 0),
+            free=data.get('free', 0),
+            active=data.get('active', 0),
+            inactive=data.get('inactive', 0),
+            buffers=data.get('buffers', 0),
+            cached=data.get('cached', 0),
+            shared=data.get('shared', 0)
+        )
+
+    @classmethod
+    def from_proc_meminfo_dict(cls, data: Dict[str, Any]) -> 'HostMemoryInfo':
+        """Create a HostMemoryInfo instance from a dictionary"""
+        converted_dict = dict(
+            total=data.get('MemTotal', 0) * 1024,
+            available=data.get('MemAvailable', 0) * 1024,
+            used=data.get('MemUsed', 0) * 1024,
+            free=data.get('MemFree', 0) * 1024,
+            active=data.get('Active', 0) * 1024,
+            inactive=data.get('Inactive', 0) * 1024,
+            buffers=data.get('Buffers', 0) * 1024,
+            cached=data.get('Cached', 0) * 1024,
+            shared=data.get('Shmem', 0) * 1024
+        )
+        converted_dict = {k: int(v.split(" ")[0]) for k, v in converted_dict.items()}
+        return cls(**converted_dict)
+
+
+@dataclass
+class HostCPUInfo:
+    """CPU information for a host"""
+    num_cores: int = 0  # Number of physical CPU cores
+    num_logical_cores: int = 0  # Number of logical CPU cores (with hyperthreading)
+    model: str = ""  # CPU model name
+    architecture: str = ""  # CPU architecture
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'HostCPUInfo':
+        """Create a HostCPUInfo instance from a dictionary"""
+        return cls(
+            num_cores=data.get('num_cores', 0),
+            num_logical_cores=data.get('num_logical_cores', 0),
+            model=data.get('model', ""),
+            architecture=data.get('architecture', ""),
+        )
+
+
+@dataclass
+class HostInfo:
+    """Information about a single host in the system"""
+    hostname: str
+    memory: HostMemoryInfo = field(default_factory=HostMemoryInfo)
+    cpu: Optional[HostCPUInfo] = None
+
+    @classmethod
+    def from_dict(cls, hostname: str, data: Dict[str, Any]) -> 'HostInfo':
+        """Create a HostInfo instance from a dictionary"""
+        memory_info = data.get('memory_info', {})
+        cpu_info = data.get('cpu_info', {})
+
+        # Determine which memory info constructor to use based on the data structure
+        if isinstance(memory_info, dict):
+            # Check if it looks like psutil data
+            if 'total' in memory_info and isinstance(memory_info['total'], int):
+                memory = HostMemoryInfo.from_psutil_dict(memory_info)
+            # Check if it looks like proc_meminfo data
+            elif 'MemTotal' in memory_info:
+                memory = HostMemoryInfo.from_proc_meminfo_dict(memory_info)
+            else:
+                # Default to empty memory info if we can't determine the format
+                memory = HostMemoryInfo()
+        else:
+            memory = HostMemoryInfo()
+
+        # Handle the case where cpu_info is None or empty
+        cpu = None
+        if cpu_info:
+            cpu = HostCPUInfo.from_dict(cpu_info)
+
+        return cls(
+            hostname=hostname,
+            memory=memory,
+            cpu=cpu,
+        )
+
+
+class ClusterInformation:
+    """
+    Comprehensive system information for all hosts in the benchmark environment.
+    This includes detailed memory, CPU, and accelerator information.
+    """
+
+    def __init__(self, host_info_list: List[str], logger):
+        self.logger = logger
+        self.host_info_list: host_info_list
+
+        # Aggregated information across all hosts
+        self.total_memory_bytes = 0
+        self.total_cores = 0
+
+        self.calculate_aggregated_info()
+
+    def calculate_aggregated_info(self):
+        """Calculate aggregated system information across all hosts"""
+        for host_info in self.host_info_list:
+            self.total_memory_bytes += host_info.memory.total
+            self.total_cores += host_info.cpu.num_cores
+
+    @classmethod
+    def from_dlio_summary_json(cls, summary, logger) -> 'ClusterInformation':
+        host_memories = summary.get("host_memory_GB")
+        hosts = summary.get("hosts")
+        host_info_list = []
+        for i, host in enumerate(hosts):
+            host_info = HostInfo(
+                hostname=host,
+                cpu=None,
+                memory=HostMemoryInfo(total=host_memories[i] * 1024 * 1024 * 1024)
+            )
+            host_info_list.append(host_info)
+        return cls(host_info_list, logger)
+
+
+class BenchmarkResult:
+    """
+    Represents the result files from a benchmark run.
+    Processes the directory structure to extract metadata and metrics.
+    """
+
+    def __init__(self, benchmark_result_root_dir, logger):
+        self.benchmark_result_root_dir = benchmark_result_root_dir
+        self.logger = logger
+        self.metadata = None
+        self.summary = None
+        self.hydra_configs = {}
+
+        self._process_result_directory()
+
+    def _process_result_directory(self):
+        """Process the result directory to extract metadata and metrics"""
+        # Find and load metadata file
+        metadata_files = [f for f in os.listdir(self.benchmark_result_root_dir)
+                          if f.endswith('_metadata.json')]
+
+        if metadata_files:
+            metadata_path = os.path.join(self.benchmark_result_root_dir, metadata_files[0])
+            try:
+                with open(metadata_path, 'r') as f:
+                    self.metadata = json.load(f)
+                self.logger.verbose(f"Loaded metadata from {metadata_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to load metadata from {metadata_path}: {e}")
+
+        # Find and load DLIO summary file
+        summary_path = os.path.join(self.benchmark_result_root_dir, 'summary.json')
+        if os.path.exists(summary_path):
+            try:
+                with open(summary_path, 'r') as f:
+                    self.summary = json.load(f)
+                self.logger.verbose(f"Loaded DLIO summary from {summary_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to load DLIO summary from {summary_path}: {e}")
+
+        # Find and load Hydra config files if they exist
+        hydra_dir = os.path.join(self.benchmark_result_root_dir, HYDRA_OUTPUT_SUBDIR)
+        if os.path.exists(hydra_dir) and os.path.isdir(hydra_dir):
+            for config_file in os.listdir(hydra_dir):
+                if config_file.endswith('.yaml'):
+                    config_path = os.path.join(hydra_dir, config_file)
+                    try:
+                        with open(config_path, 'r') as f:
+                            self.hydra_configs[config_file] = yaml.safe_load(f)
+                        self.logger.verbose(f"Loaded Hydra config from {config_path}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to load Hydra config from {config_path}: {e}")
+
+
+class BenchmarkRun:
+    """
+    Represents a benchmark run with all parameters and system information.
+    Can be constructed either from a benchmark instance or from result files.
+    """
+    def __init__(self, logger, benchmark_result=None, benchmark_instance=None):
+        self.logger = logger
+        if benchmark_result is None and benchmark_instance is None:
+            self.logger.error(f"The BenchmarkRun instance needs either a benchmark_result or a benchmark_instance.")
+            raise ValueError("Either benchmark_result or benchmark_instance must be provided")
+        if benchmark_result and benchmark_instance:
+            self.logger.error(f"Both benchmark_result and benchmark_instance provided, which is not supported.")
+            raise ValueError("Only one of benchmark_result and benchmark_instance can be provided")
+            
+        self.benchmark_type = None
+        self.model = None
+        self.command = None
+        self.parameters = {}
+        self.system_info = None
+        self.metrics = {}
+        self.run_id = None
+        self.run_datetime = None
+        
+        if benchmark_instance:
+            self._process_benchmark_instance(benchmark_instance)
+        elif benchmark_result:
+            self._process_benchmark_result(benchmark_result)
+
+        self.run_id = RunID(program=self.benchmark_type, command=self.command, model=self.model,
+                            run_datetime=self.run_datetime)
+
+    def _process_benchmark_instance(self, benchmark_instance):
+        """Extract parameters and system info from a running benchmark instance"""
+        self.benchmark_type = benchmark_instance.BENCHMARK_TYPE
+        self.model = getattr(benchmark_instance.args, 'model', None)
+        self.command = getattr(benchmark_instance.args, 'command', None)
+        self.run_datetime = benchmark_instance.run_datetime
+        
+        # Extract parameters from the benchmark instance
+        if hasattr(benchmark_instance, 'combined_params'):
+            self.parameters = benchmark_instance.combined_params
+        else:
+            # Fallback to args if combined_params not available
+            self.parameters = vars(benchmark_instance.args)
+            
+        # Extract system information
+        if hasattr(benchmark_instance, 'cluster_information'):
+            self.system_info = benchmark_instance.cluster_information
+
+    def _process_benchmark_result(self, benchmark_result):
+        """Extract parameters and system info from result files"""
+        # Process the summary and hydra configs to find what was run
+        summary_workload = benchmark_result.summary.get('workload', {})
+        summary_workflow = summary_workload.get('workflow', {})
+        workflow = (
+            summary_workflow.get('generate_data', {}),
+            summary_workflow.get('train', {}),
+            summary_workflow.get('checkpoint', {}),
+        )
+
+        # Get benchmark type based on workflow
+        if workflow[0] or workflow[1]:
+            self.benchmark_type = BENCHMARK_TYPES.training
+        elif workflow[2]:
+            self.benchmark_type = BENCHMARK_TYPES.checkpointing
+
+        self.model = summary_workload.get('model', {}).get("name")
+
+        if workflow[0] and not any(workflow[1], workflow[2]):
+            self.command = "datagen"
+        if workflow[1] and not any(workflow[0], workflow[2]):
+            self.command = "run_benchmark"
+
+        self.run_datetime = benchmark_result.summary.get("start")
+        self.parameters = benchmark_result.hydra_conifigs.get("config.yaml", {}).get("workload", {})
+
+        self.metrics = benchmark_result.summary.get("metric")
+        self.system_info = ClusterInformation.from_dlio_summary_json(benchmark_result.summary, self.logger)
+
+
+class RulesChecker(abc.ABC):
+    """
+    Base class for rule checkers that verify benchmark runs against rules.
+    """
+    def __init__(self, benchmark_run, logger):
+        self.benchmark_run = benchmark_run
+        self.logger = logger
+        self.issues = []
+        
+        # Dynamically find all check methods
+        self.check_methods = [getattr(self, method) for method in dir(self) 
+                             if callable(getattr(self, method)) and method.startswith('check_')]
+        
+    def run_checks(self) -> List[Issue]:
+        """Run all check methods and return a list of issues"""
+        self.issues = []
+        for check_method in self.check_methods:
+            try:
+                method_issues = check_method()
+                if method_issues:
+                    if isinstance(method_issues, list):
+                        self.issues.extend(method_issues)
+                    else:
+                        self.issues.append(method_issues)
+            except Exception as e:
+                self.logger.error(f"Error running check {check_method.__name__}: {e}")
+                self.issues.append(Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Check {check_method.__name__} failed with error: {e}",
+                    severity="error"
+                ))
+        
+        return self.issues
+    
+    @abc.abstractmethod
+    def check_benchmark_type(self) -> Optional[Issue]:
+        """Check if the benchmark type is valid"""
+        pass
+
+
+class TrainingRulesChecker(RulesChecker):
+    """Rules checker for training benchmarks"""
+    
+    def check_benchmark_type(self) -> Optional[Issue]:
+        if self.benchmark_run.benchmark_type != BENCHMARK_TYPES.training.name:
+            return Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Invalid benchmark type: {self.benchmark_run.benchmark_type}",
+                parameter="benchmark_type",
+                expected=BENCHMARK_TYPES.training.name,
+                actual=self.benchmark_run.benchmark_type
+            )
+        return None
+    
+    def check_model(self) -> Optional[Issue]:
+        if not self.benchmark_run.model or self.benchmark_run.model not in MODELS:
+            return Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Invalid or missing model: {self.benchmark_run.model}",
+                parameter="model",
+                expected=f"One of {MODELS}",
+                actual=self.benchmark_run.model
+            )
+        return None
+    
+    def check_num_files_train(self) -> Optional[Issue]:
+        """Check if the number of training files meets the minimum requirement"""
+        if 'dataset' not in self.benchmark_run.parameters:
+            return Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message="Missing dataset parameters",
+                parameter="dataset"
+            )
+            
+        dataset_params = self.benchmark_run.parameters['dataset']
+        if 'num_files_train' not in dataset_params:
+            return Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message="Missing num_files_train parameter",
+                parameter="dataset.num_files_train"
+            )
+            
+        # Calculate required file count based on system info
+        # This is a simplified version - in practice you'd use the calculate_training_data_size function
+        configured_num_files = int(dataset_params['num_files_train'])
+        
+        # For this example, we'll assume a minimum of 1000 files
+        # In practice, you'd calculate this based on memory and other factors
+        required_num_files = 1000
+        
+        if configured_num_files < required_num_files:
+            return Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Insufficient number of training files",
+                parameter="dataset.num_files_train",
+                expected=f">= {required_num_files}",
+                actual=configured_num_files
+            )
+        
+        return None
+
+
+class CheckpointingRulesChecker(RulesChecker):
+    """Rules checker for checkpointing benchmarks"""
+    def check_benchmark_type(self) -> Optional[Issue]:
+        pass
+
+
+class BenchmarkRunVerifier:
+
+    def __init__(self, benchmark_run, logger):
+        self.benchmark_run = benchmark_run
+        self.logger = logger
+        self.issues = []
+
+        if self.benchmark_run.benchmark_type == BENCHMARK_TYPES.training:
+            self.rules_checker = TrainingRulesChecker(benchmark_run, logger)
+        elif self.benchmark_run.benchmark_type == BENCHMARK_TYPES.checkpointing:
+            self.rules_checker = CheckpointingRulesChecker(benchmark_run, logger)
+
+    def verify(self) -> PARAM_VALIDATION:
+        self.issues = self.rules_checker.run_checks()
+        num_invalid = 0
+        num_open = 0
+        num_closed = 0
+
+        for issue in self.issues:
+            if issue.validation == PARAM_VALIDATION.INVALID:
+                self.logger.error(f"INVALID: {issue}")
+                num_invalid += 1
+            elif issue.validation == PARAM_VALIDATION.CLOSED:
+                self.logger.status(f"Closed: {issue}")
+                num_closed += 1
+            elif issue.validation == PARAM_VALIDATION.OPEN:
+                self.logger.status(f"Open: {issue}")
+                num_open += 1
+            else:
+                raise ValueError(f"Unknown validation type: {issue.validation}")
+
+        if num_invalid > 0:
+            return PARAM_VALIDATION.INVALID
+        elif num_open > 0:
+            return PARAM_VALIDATION.OPEN
+        else:
+            return PARAM_VALIDATION.CLOSED
 
 
 class BenchmarkVerifier:
@@ -60,6 +549,8 @@ class BenchmarkVerifier:
         configured_num_files_train = int(self.benchmark.combined_params['dataset']['num_files_train'])
         if configured_num_files_train < num_files:
             self.logger.error(f'Configured number of files for training ({configured_num_files_train}) is less than required number of files ({num_files}).')
+            if self.benchmark.args.command == "run":
+                self.logger.error(f'Use the --param option to pass the correct number of files for training. "--param dataset.num_files_train=<number_of_files>"')
             validation_set.add(PARAM_VALIDATION.INVALID)
         else:
             self.logger.verbose(f'Configured number of files for training ({configured_num_files_train}) meets the required number of files ({num_files}).')

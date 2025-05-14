@@ -6,9 +6,8 @@ import sys
 from mlpstorage.benchmarks.base import Benchmark
 from mlpstorage.config import (CONFIGS_ROOT_DIR, BENCHMARK_TYPES, EXEC_TYPE, MPIRUN, MLPSTORAGE_BIN_NAME,
                                LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, EXIT_CODE, MODELS, HYDRA_OUTPUT_SUBDIR)
-from mlpstorage.rules import calculate_training_data_size
-from mlpstorage.utils import (read_config_from_file, create_nested_dict, update_nested_dict, ClusterInformation,
-                              generate_mpi_prefix_cmd)
+from mlpstorage.rules import calculate_training_data_size, HostInfo, HostMemInfo, HostCPUInfo, ClusterInformation
+from mlpstorage.utils import (read_config_from_file, create_nested_dict, update_nested_dict, generate_mpi_prefix_cmd)
 
 
 class DLIOBenchmark(Benchmark, abc.ABC):
@@ -27,8 +26,18 @@ class DLIOBenchmark(Benchmark, abc.ABC):
         self.per_host_mem_kB = None
         self.total_mem_kB = None
 
-        self.cluster_information = ClusterInformation(hosts=self.args.hosts, username=args.ssh_username,
-                                                      debug=self.debug)
+        self.cluster_information = self.accumulate_host_info(args)
+
+    def accumulate_host_info(self, args):
+        host_info_list = []
+        for host in args.hosts:
+            host_info = HostInfo(
+                hostname=host,
+                cpu=None,
+                memory=HostMemInfo(total=args.mem, per_host=args.per_host_mem)
+            )
+            host_info_list.append(host_info)
+        return ClusterInformation(host_info_list=host_info_list, logger=self.logger)
 
     @property
     def config_name(self):
