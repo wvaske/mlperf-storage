@@ -546,6 +546,19 @@ class TrainingRulesChecker(RulesChecker):
                 ))
         return issues
 
+    def check_checkpoint_files_in_code(self) -> Optional[Issue]:
+        pass
+
+    def check_num_epochs(self) -> Optional[Issue]:
+        pass
+
+    def check_inter_test_times(self) -> Optional[Issue]:
+        pass
+
+    def check_file_system_caching(self) -> Optional[Issue]:
+        pass
+
+
 
 
 class CheckpointingRulesChecker(RulesChecker):
