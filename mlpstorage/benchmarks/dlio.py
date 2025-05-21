@@ -142,7 +142,7 @@ class TrainingBenchmark(DLIOBenchmark):
             # The add_datadir_param would convert --data-dir to --dataset.data_folder which is invalid to
             # mlpstorage.
             self.add_datadir_param()
-        self.logger.status(f'Instantiated the Training Benchmark...')
+        self.logger.verboser(f'Instantiated the Training Benchmark...')
 
     def add_datadir_param(self):
         self.params_dict['dataset.data_folder'] = self.args.data_dir

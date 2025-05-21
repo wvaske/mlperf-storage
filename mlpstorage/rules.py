@@ -10,7 +10,7 @@ from pprint import pprint, pformat
 from typing import List, Dict, Any, Optional, Tuple
 
 from mlpstorage.config import (MODELS, PARAM_VALIDATION, MAX_READ_THREADS_TRAINING, LLM_MODELS, BENCHMARK_TYPES,
-                               DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, HYDRA_OUTPUT_SUBDIR)
+                               DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, HYDRA_OUTPUT_SUBDIR, UNET)
 from mlpstorage.mlps_logging import setup_logging
 from mlpstorage.utils import is_valid_datetime_format
 
@@ -516,7 +516,7 @@ class TrainingRulesChecker(RulesChecker):
         """
         closed_allowed_params = ['dataset.num_files_train', 'dataset.num_subfolders_train', 'dataset.data_folder',
                                  'reader.read_threads', 'reader.computation_threads', 'reader.transfer_size',
-                                 'reader.prefetch_size', 'checkpoint.checkpoint_folder',
+                                 'reader.odirect', 'reader.prefetch_size', 'checkpoint.checkpoint_folder',
                                  'storage.storage_type', 'storage.storage_root']
         open_allowed_params = ['framework', 'dataset.format', 'dataset.num_samples_per_file', 'reader.data_loader']
         issues = []
@@ -545,6 +545,19 @@ class TrainingRulesChecker(RulesChecker):
                     actual=value
                 ))
         return issues
+
+    def check_odirect_supported_model(self) -> Optional[Issue]:
+        # The 'reader.odirect' option is only supported if the model is "Unet3d"
+        if self.benchmark_run.model != UNET and self.benchmark_run.parameters.get('reader', {}).get('odirect'):
+            return Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message="The reader.odirect option is only supported for Unet3d model",
+                parameter="reader.odirect",
+                expected="False",
+                actual=self.benchmark_run.parameters.get('reader', {}).get('odirect')
+            )
+        else:
+            return None
 
     def check_checkpoint_files_in_code(self) -> Optional[Issue]:
         pass
