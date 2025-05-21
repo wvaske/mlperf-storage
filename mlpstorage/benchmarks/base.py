@@ -40,7 +40,7 @@ class Benchmark(abc.ABC):
         self.run_number = run_number
         self.runtime = 0
 
-        self.benchmark_run_verifier = BenchmarkRunVerifier(self, logger=self.logger)
+        self.benchmark_run_verifier = None
         self.verification = None
         self.cmd_executor = CommandExecutor(logger=self.logger, debug=args.debug)
 
@@ -122,6 +122,9 @@ class Benchmark(abc.ABC):
 
     def verify_benchmark(self) -> bool:
         self.logger.verboser(f'Verifying benchmark parameters: {self.args}')
+        if not self.benchmark_run_verifier:
+            self.benchmark_run_verifier = BenchmarkRunVerifier(self, logger=self.logger)
+
         self.verification = self.benchmark_run_verifier.verify()
         self.logger.verboser(f'Benchmark verification result: {self.verification}')
 
