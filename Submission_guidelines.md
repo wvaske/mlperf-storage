@@ -207,7 +207,6 @@ For OPEN submissions, the total number of GPUs may be increased in multiples of 
 | --num-checkpoints-read     | Number of write checkpoints                  | 10 or -1**                              | NO                   | NO                  |
 
 ** has to be set  ``--num-checkpoints-read=-1`` explicitly for performing only checkpoint write, and ``--num-checkpoints-write=-1`` for performing only checkpoint read.
-### 2.3 Vector Database
 
 ## 3 Definitions 
 The following definitions are used throughout this document:
@@ -314,6 +313,11 @@ Caching of training data on ``host nodes`` running MLPerf Storage is controlled 
 
 ### 6.7. Replicability is mandatory
 Results that cannot be replicated are not valid results. Replicated results should be within 5% within 5 tries.
+
+### 6.8 Consecutive Runs Requirement
+Each of the benchmarks described in this document have a requirement for multiple runs. This is to ensure consistency of operation of the system under test as well as ensure statistical significance of the measurements.
+
+Unless otherwise noted, the multiple runs for a workload need to be run consecutively. To ensure this requirement is met, the time between runs (from the stop time of one run and the start time to the next run) needs to be less than the time to execute a single run. This is to discourage cherry-picking of results which is expressly forbidden and against the spirit of the rules.
 
 ## 7. Dataset Generation
 
@@ -597,6 +601,8 @@ The following information is required to be included in the system description P
 - Version of the benchmark
 - Solution type of the submission
 - Submission division (OPEN or CLOSED)
+- Power Requirements
+- System Topology
 
 **Mandatory Power requirements**
 
@@ -634,6 +640,9 @@ Two examples of a power requirements tables are shown below:
 | **Totals**           |                   | **12 watts**          | **12 watts**   |
 
 System component and power supply unit names in the above tables are examples. Consistent names should be used in bill-of-material documentation, system diagrams and descriptive text.
+
+**System Topology**
+The system topology needs to show logical connections between the nodes and network devices listed in the system-description.yaml. The simplest form is made up of squares and lines with a square for each node and a line for each connection between the nodes. Every node listed in the system-description.yaml needs to have a representative visual in the topology diagram. For large deployments (larger than 4 nodes), use an appropriate scaling notation. For example, in a solution of 16 identical client nodes, show squares for the first and last nodes (with node names and numbers in the nodes) separated by "...". 
 
 **Optional information**
 
