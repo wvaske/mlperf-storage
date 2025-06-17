@@ -582,7 +582,12 @@ Each submission must contain a ``<system-name>.yaml`` file and a ``<system-name>
 
 Note that, during the review period, submitters may be asked to include additional details in the yaml and pdf to enable reproducibility by a third party.
 
-#### 11.4.1 System Description PDF
+#### 11.4.1 System Description YAML
+The system description yaml is a hybrid human-readable and machine-readable description of the total system under test. It contains fields for the System overall, the Nodes that make up the solution (clients and storage), as well as Power information of the nodes.
+
+An example can be found [HERE](https://github.com/mlcommons/storage/blob/main/system_configuration.yaml)
+
+#### 11.4.2 System Description PDF
 
 The goal of the pdf is to complement the JSON file, providing additional detail on the system to enable full reproduction by a third party. We encourage submitters to add details that are more easily captured by diagrams and text description, rather than a JSON.
 
