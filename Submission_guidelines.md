@@ -97,16 +97,19 @@ Benchmark results may be submitted for the following four model configurations. 
 For CLOSE submissions, participants are not permitted to change the total number of GPUs. However, they may adjust the number of GPUs per host, as long as each host uses more than 4 GPUs. This allows the use of nodes with higher GPU density and fewer total nodes. Note: the aggregate GPU memory across all nodes must be sufficient to accommodate the model’s checkpoint size.
 
 **Table 2 LLM models**
-|           Model            | 8B    | 70B   | 405B   | 1T     |
-|-----------------------|-------|-------|--------|--------|
-| Hidden dimension      | 4096  | 8192  | 16384  | 25872  |
-| FFN size              | 14336 | 28672 | 53248  | 98304  |
-| num_attention_heads   | 32    | 128   | 128    | 192    |
-| num_kv_heads          | 8     | 8     | 8      | 32     |
-| Num layers            | 32    | 80    | 126    | 128    |
-| Parallelism (TPxPPxDP)    | 1×1×8 | 8×1x8 | 8×32×2 | 8×64×2 |
-| ZeRO            | 3         | 3       | 1          | 1          |
-| Checkpoint size | 105 GB    | 912 GB  | 5.29 TB    | 18 TB      |
+
+| Model                  | 8B     | 70B    | 405B    | 1T     |
+|------------------------|--------|--------|---------|--------|
+| Hidden dimension       | 4096   | 8192   | 16384   | 25872  |
+| FFN size               | 14336  | 28672  | 53248   | 98304  |
+| num_attention_heads    | 32     | 128    | 128     | 192    |
+| num_kv_heads           | 8      | 8      | 8       | 32     |
+| Num layers             | 32     | 80     | 126     | 128    |
+| Parallelism (TPxPPxDP) | 1×1×8  | 8×1x8  | 8×32×2  | 8×64×2 |
+| Total Processes        | 8      | 64     | 512     | 1024   |
+| ZeRO                   | 3      | 3      | 1       | 1      |
+| Checkpoint size        | 105 GB | 912 GB | 5.29 TB | 18 TB  |
+| Subset: 8-Process Size | 105 GB | 114 GB | 94 GB   | 161 GB |
 
 
 #### 2.2.2 Benchmark Execution
@@ -114,24 +117,67 @@ For CLOSE submissions, participants are not permitted to change the total number
 
 There are two operational modes:
 
-* ``default``: Used for global storage systems. In this mode, the benchmark runs at scale to write/read the entire checkpoint dataset. The total number of GPUs must match the number listed in Table 2 (TP×PP×DP).
+* ``default``: Used for shared storage systems. In this mode, the benchmark runs on multiple hosts to write/read the entire checkpoint dataset. The total number of processes (emulated GPUs) must match the number listed in Table 2 (TP×PP×DP = Total Processes).
 
-* ``subset``: Intended for node local storage systems.In this mode, checkpointing is simulated on a single host by writing/reading only a fraction (``num_gpus/TP/PP/DP``) of the checkpoint data, where ``num_gpus`` is the number of gpus on the host. 
+* ``subset``: Intended for node local storage systems. In this mode, checkpointing is simulated on a single host by writing/reading only a fraction (``num_gpus/TP/PP/DP``) of the checkpoint data, where ``num_gpus`` is the number of gpus on the host. The only allowed value for number of processes in a subset submission is 8 (the 8B model does not support subset mode as it is already set to 8 processes).
 
 **Checkpoint write and (read) recovery**
 
-For each submission, one must first perform the checkpoint write, then clear the cache, and finally perform the checkpoint read. The required command-line flags are:
+For each submission, one must first perform the checkpoint write, then clear the cache if required, and finally perform the checkpoint read. The required command-line flags are:
+*Note: Clearing caches is done to ensure that no data for the read phase comes from the filesystem cache*
+
+For a submission, the sequence is the following:
+1. Write 10x checkpoints
+2. Clear filesystem caches if necessary
+3. Read 10x checkpoints
+
+The default options will run the read and write checkpoints in a single mlpstorage call. For example, the following command will execute a sequence of writing 10 checkpoints and reading those same 10 checkpoints.
+```bash
+mlpstorage checkpointing run --client-host-memory-in-gb 512 --model llama3-8b --num-processes 8 --checkpoint-folder /mnt/checkpoint_test
+```
+
+If caches need to be cleared use the following parameters for the WRITE and READ tests. 
 
 * WRITE: ``--num-checkpoints-read=0``
 * READ: ``--num-checkpoints-write=0``
 
+In the above example, the write tests would be executed first with this command which will do the writes but no reads.
+```bash
+mlpstorage checkpointing run --client-host-memory-in-gb 512 --model llama3-8b --num-processes 8 --checkpoint-folder /mnt/checkpoint_test --num-checkpoints-read=0
+```
 
+After the write tests complete, clear the caches on your hosts. A standard linux system would use a command like this:
+```bash
+echo 3 > /proc/sys/vm/drop_caches
+```
+The end result of "clearing caches" is that 100% data for the read phase should come from the storage system under test and not from the client's filesystem cache. 
+
+Finally, with the same example the read tests would be executed with the following command which indicates no writes during this phase:
+```bash
+mlpstorage checkpointing run --client-host-memory-in-gb 512 --model llama3-8b --num-processes 8 --checkpoint-folder /mnt/checkpoint_test --num-checkpoints-write=0
+```
+
+Caches need to be cleared by the user outside of the mlpstorage tool.
+
+##### 2.2.2.1 Clearing Caches
+
+The checkpoints that are written are quite large. **If the checkpoint size per client node is less than 3x the client node's memory capacity, then the filesystem cache needs to be cleared between the write and read phases.**
+
+Examples:
+
+| Model (Total Size)  | Num Clients & Memory                      | Size for ranks             | Size for 1st and Last Client                             | Need to Clear Caches?                                            |
+|---------------------|-------------------------------------------|----------------------------|----------------------------------------------------------|------------------------------------------------------------------|
+| Llama3 405b (5.2TB) | 8x (64 Ranks / Node)<br>1024GB per Client | 256x 11.8GB<br>256x 8.85GB | First: 755GB (64x 11.8GB)<br>Last: 566.4GB (64x 8.85GB)  | No (556GB x 3 = 1,699GB which is greater than the client memory) |
+| Llama3 70b (912GB)  | 8x (8x Ranks / Node)<br>1024GB per Client | 64x 11.23GB                | First: 89.8GB (8x 14.23GB)<br>Last: Same as First (DP=1) | Yes (89.8 x 3 = 269.5GB which is less than the client memory)    |
+
+In the first case, after 2x checkpoints data that has been written is being flushed from the filesystem cache. This means that after 10x checkpoints a standard Linux system will not have any data in the filesystem cache that would be read for a checkpoint recovery starting back at the first written checkpoint.
+
+In the second case, after 10x checkpoints, 898GB of data will have been written per client with each client having 1024GB of memory. Without clearing caches this data would be read from the filesystem cache
 
 **fsync**
 We enforce ``fsync`` to be applied during checkpoint writes to ensure data is flushed to persistent storage. ``fsync`` is enabled by default in all workload configuration files.
 
 **Example Execution Commands**
-Note: The output directories for the write and read phases must be different to avoid overwriting results. 
 
 * ``default`` mode (``WORLD_SIZE = TP*PP*DP`` as listed in Table 2): 
   ```bash
@@ -140,9 +186,8 @@ Note: The output directories for the write and read phases must be different to 
     --hosts ip1 ip2 .... \
     --num-processes 512 \
     --num-checkpoints-read 0 \
-    --num-checkpoints-write 1 \
     --checkpoint-folder ./checkpoint_data1 \
-    --results-dir ./checkpoint_results_write \
+    --results-dir ./mlpstorage_results \
     --client-host-memory-in-gb 64
 
   # Clear the cache (This might require admin access to the system)
@@ -152,22 +197,20 @@ Note: The output directories for the write and read phases must be different to 
   mlpstorage checkpointing run --model llama3-405b \
     --hosts ip1 ip2 .... \
     --num-processes 512 \
-    --num-checkpoints-read 1 \
     --num-checkpoints-write 0 \
     --checkpoint-folder ./checkpoint_data1 \
-    --results-dir ./checkpoint_results_read \
+    --results-dir ./mlpstorage_results \
     --client-host-memory-in-gb 64
   ```
-* ``subset`` mode (on a single host with 8 GPUs)
+* ``subset`` mode (on a single host with **8 GPUs**)
   ```bash
   # Perform checkpoint writes (data parallelism must match Table 2)
   mlpstorage checkpointing run --model llama3-405b \
     --hosts ip1 \
     --num-processes 8 \
     --num-checkpoints-read 0 \
-    --num-checkpoints-write 1 \
     --checkpoint-folder ./checkpoint_data1 \
-    --results-dir ./checkpoint_results_write \
+    --results-dir ./mlpstorage_results \
     --client-host-memory-in-gb 64
   # Clear the cache 
   ... 
@@ -175,38 +218,66 @@ Note: The output directories for the write and read phases must be different to 
   mlpstorage checkpointing run --model llama3-405b \
     --hosts ip1 \
     --num-processes 8 \
-    --num-checkpoints-read 1 \
     --num-checkpoints-write 0 \
     --checkpoint-folder ./checkpoint_data1 \
-    --results-dir ./checkpoint_results_read \
+    --results-dir ./mlpstorage_results \
     --client-host-memory-in-gb 64
   ```
 
 #### 2.2.3 Metrics and Results Reporting
 We report the checkpoint time per write / read and I/O throughput from each rank. For each run: 
 
-	* The metric for duration is the maximum time across all GPUs.
-	* The metric for throughput is the minimum across all GPUs.
+	* The metric for duration is the maximum time across all processes.
+	* The metric for throughput is the minimum across all processes.
 
-Each benchmark setup must be executed five times, and logs from all five runs must be submitted. The final metrics are the average across the five runs. Runs must be consecutive with not failed runs between the selected runs. Runs can not be cherry picked from a range of runs excepting that all five runs are consecutive within the large sequence of runs.
+A checkpoint workload submission must include 10 checkpoints written and 10 checkpoints read as well as the logs for any optional processes as outlined in section 2.2.5 (clearing caches, storage remapping, etc)
 
+#### 2.2.4 Requirements for Simultaneously Readable and Writable
+
+Checkpoint recovery is intended to mimic an environment where a failure has occurred and the data needs to be read by different hosts than wrote the data. 
+
+For storage systems where all hosts can read and write all data simultaneously, the process described above satisfies the requirements.
+
+For storage systems where 1 host has write access to a volume but all hosts have read access, the above process also satisfies the requirements so long as reads can be fulfilled immediately following a write.
+
+For storage systems where 1 host has write access to a volume and a "remapping" process is required for other hosts to read the same data, the time to remap must be measured and included in the submission. 
+
+**Any processes between the write and read phases of checkpointing that are required before data can be read by a different host than wrote the data must be measured and included in the submission. The time for these processes will be added to the recovery time and throughput calculation for submitted scores** 
+
+The system_configuration.yaml document must list whether the solution support simultaneous reads and/or writes as such:
+```yaml
+System:
+  shared_capabilities:
+    multi_host_support: True            # False is used for local storage
+    simultaneous_write_support: False   # Are simultaneous writes by multiple hosts supported in the submitted configuration
+    simultaneous_read__support: True    # Are simultaneous reads by multiple hosts supported in the submitted configuration
+```
 
 #### 2.2.5 OPEN vs CLOSE submissions
-For CLOSED submissions, the total number of GPUs must be fixed according to Table 2.
+For CLOSED submissions, the total number of processes must be fixed according to Table 2.
 
-For OPEN submissions, the total number of GPUs may be increased in multiples of (TP×PP) to showcase the scalability of the storage solution.
+For OPEN submissions, the total number of processes may be increased in multiples of (TP×PP) to showcase the scalability of the storage solution.
 
 **Table 3: Configuration parameters and their mutability in CLOSED and OPEN divisions**
 
-| Parameter                          | Meaning                                      | Default value                        | Changeable in CLOSE | Changeable in OPEN |
-|-----------------------------------|----------------------------------------------|--------------------------------------|----------------------|---------------------|
-| --ppn                             | Number of GPUs per node                      | N/A                                  | YES (minimal 4)      | YES (minimal 4)     |
-| --num-processes                    | Total number of GPUs                         | Node local: 8<br>Global: the value in Table 1 | NO                   | YES                 |
-| --checkpoint-folder      | The folder to save the checkpoint data       | checkpoint/{workload}                | YES                  | YES                 |
-| --num-checkpoints-write | Number of write checkpoints                  | 10 or -1**                             | NO              | NO                  |
-| --num-checkpoints-read     | Number of write checkpoints                  | 10 or -1**                              | NO                   | NO                  |
+| Parameter                          | Meaning                                      | Default value                                 | Changeable in CLOSE | Changeable in OPEN |
+|-----------------------------------|----------------------------------------------|-----------------------------------------------|----------------------|---------------------|
+| --ppn                             | Number of processes per node                      | N/A                                           | YES (minimal 4)      | YES (minimal 4)     |
+| --num-processes                    | Total number of processes                         | Node local: 8<br>Global: the value in Table 1 | NO                   | YES                 |
+| --checkpoint-folder      | The folder to save the checkpoint data       | checkpoint/{workload}                         | YES                  | YES                 |
+| --num-checkpoints-write | Number of write checkpoints                  | 10 or 0**                                     | NO              | NO                  |
+| --num-checkpoints-read     | Number of write checkpoints                  | 10 or 0**                                     | NO                   | NO                  |
 
-** has to be set  ``--num-checkpoints-read=-1`` explicitly for performing only checkpoint write, and ``--num-checkpoints-write=-1`` for performing only checkpoint read.
+** By default, --num-checkpoints-read and --num-checkpoints-write are set to be 10. To perform write only, one has to turn off read by explicitly setting ``--num-checkpoints-read=0``; to perform read only, one has to turn off write by explicitly set  ``--num-checkpoints-write=0``
+
+For an OPEN or CLOSED submission, the process must follow:
+1. Write 10 checkpoints
+2. Clearing Caches or Remapping Volumes if required
+3. Read 10 checkpoint
+
+DLIO and mlpstorage both support options to run 10 checkpoints with a single call or run 10 checkpoints as separate invokations of the tools. So long as the process is followed, checkpoints can be executed as a 10 checkpoint batch or individually. 
+
+### 2.3 Vector Database
 
 ## 3 Definitions 
 The following definitions are used throughout this document:
@@ -246,9 +317,12 @@ The following definitions are used throughout this document:
   - **Other** – any solution whose access is not sufficiently described by the above categories.  This will be abbreviated “**Other**” in the results table.
 
 ## 4. Performance Metrics
-TODO: Move to benchmark definitions with metrics for each?
 
-The benchmark performance metric is **samples per second, subject to a minimum accelerator utilization (AU) defined for that workload**. Higher samples per second is better. 
+The metrics reported by the benchmark are different for different types of workloads.  They are broken out below.
+
+### 4.1. Training Workloads
+
+The benchmark performance metric for Training workloads (3D-Unet, ResNet-50, and Cosmflow) is **samples per second, subject to a minimum accelerator utilization (AU) defined for that workload**. Higher samples per second is better. 
 
 To pass a benchmark run, the AU should be equal to or greater than the minimum value, and is computed as follows:
 ```
@@ -265,6 +339,10 @@ total_compute_time = (records_per_file * total_files) / simulated_accelerators /
 ```
 
 *NOTE: The sleep time has been determined by running the actual MLPerf training workloads including the compute step on real hardware and is dependent on the accelerator type. In this version of the benchmark we include sleep times for **NVIDIA A100 and H100 GPUs**. We plan on expanding the measurements to different accelerator types in future releases.*
+
+### 4.2. Checkpoint Workloads
+
+The benchmark performance metrics for Checkpoint workloads (write/take, and read/recover) are **bandwidth while writing, and bandwidth while reading**, plus an additional data point which is the amount of time required, if any, between the completion of writing a checkpoint and the first point at which that checkpoint can be read from a different ``host node``.  That duration between write completeion and availability for reading will be added to the time to read/recover from the benchmark.
 
 ## 5. Benchmark Code
 
@@ -384,26 +462,39 @@ In order to accomplish that, most of the optimizations and customizations to the
 
 For CLOSED submissions of this benchmark, the MLPerf Storage codebase takes the place of the AI/ML algorithms and framework, and therefore cannot be changed. 
 
-A small number of parameters can be configured in CLOSED submissions; listed in the table below.
+A small number of parameters can be configured in CLOSED submissions; listed in the tables below.
 
-| Parameter | Description | Default |
-| ---- | ---- | ---- |
-| *Dataset parameters* | | |
-| dataset.num_files_train | Number of files for the training set | -- |
-| dataset.num_subfolders_train | Number of subfolders that the training set is stored | 0 |
-| dataset.data_folder | The path where dataset is stored | -- |
-| *Reader parameters* | | |
-| reader.read_threads | Number of threads to load the data | -- |
-| reader.computation_threads | Number of threads to preprocess the data(only for bert) | -- |
-| reader.transfer_size | An int64 scalar representing the number of bytes in the read buffer. (only supported for Tensorflow) | |
-| reader.prefetch_size | An int64 scalar representing the amount of prefetching done, with values of 0, 1, or 2. | |
-| *Checkpoint parameters* | | |
-| checkpoint.checkpoint_folder | The folder to save the checkpoints | -- |
-| *Storage parameters* | | |
-| storage.storage_root | The storage root directory | ./ |
-| storage.storage_type | The storage type | local_fs |
+**Table: Training Workload Tunable Parameters for CLOSED**
 
-Table 2: Alterable parameters for CLOSED submissions
+| Parameter                    | Description                                                                                                                         | Default  |
+|------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|----------|
+| *Dataset parameters*         |                                                                                                                                     |          |
+| dataset.num_files_train      | Number of files for the training set                                                                                                | --       |
+| dataset.num_subfolders_train | Number of subfolders that the training set is stored                                                                                | 0        |
+| dataset.data_folder          | The path where dataset is stored                                                                                                    | --       |
+|                              |                                                                                                                                     |          |
+| *Reader parameters*          |                                                                                                                                     |          |
+| reader.read_threads          | Number of threads to load the data                                                                                                  | --       |
+| reader.computation_threads   | Number of threads to preprocess the data (only for resnet)                                                                          | --       |
+| reader.transfer_size         | An int64 scalar representing the number of bytes in the read buffer. (only supported for Tensorflow models -- Resnet and Cosmoflow) |          |
+| reader.prefetch_size         | An int64 scalar representing the amount of prefetching done, with values of 0, 1, or 2.                                             |          |
+| reader.odirect               | Enable ODIRECT mode for Unet3D Training                                                                                             | False    |
+|                              |                                                                                                                                     |          |
+| *Checkpoint parameters*      |                                                                                                                                     |          |
+| checkpoint.checkpoint_folder | The folder to save the checkpoints                                                                                                  | --       |
+|                              |                                                                                                                                     |          |
+| *Storage parameters*         |                                                                                                                                     |          |
+| storage.storage_root         | The storage root directory                                                                                                          | ./       |
+| storage.storage_type         | The storage type                                                                                                                    | local_fs |
+
+**Table: Checkpoint Workload Tunable Parameters for CLOSED**
+
+| Parameter                        | Description                                                 | Default               |
+|----------------------------------|-------------------------------------------------------------|-----------------------|
+| checkpoint.checkpoint_folder     | The storage directory for writing and reading checkpoints   | ./checkpoints/<model> |
+| checkpoint.num_checkpoints_write | The number of checkpoint writes to do in a single dlio call | 10                    |
+| checkpoint.num_checkpoints_read  | The number of checkpoint reads to do in a single dlio call  | 10                    |
+
 
 CLOSED division benchmarks must be referred to using the benchmark name plus the term CLOSED, e.g. “The system was able to support *N ACME X100* accelerators running a CLOSED division 3D U-Net workload at only 8% less than optimal performance.”
 
@@ -419,17 +510,25 @@ While changes to DLIO are allowed, changing the workload itself is not.  Ie: how
 
 In addition to what can be changed in the CLOSED submission, the following parameters can be changed in the benchmark.sh script:
 
-| Parameter |  Description | Default |
-| --- | --- | --- |
-| framework | The machine learning framework. | 3D U-Net: PyTorch; ResNet-50: Tensorflow; Cosmoflow: Tensorflow |
-| *Dataset parameters* | | |
-| dataset.format | Format of the dataset. | 3D U-Net: .npz; ResNet-50: .tfrecord; Cosmoflow: .tfrecord |
-| dataset.num_samples_per_file | Changing this parameter is supported only with Tensorflow, using tfrecord datasets. Currently, the benchmark code only supports num_samples_per_file = 1 for Pytorch data loader. To support other values, the data loader needs to be adjusted. | 3D U-Net: 1; ResNet-50: 1251; Cosmoflow: 1 |
-| *Reader parameters* | | |
-| reader.data_loader | Supported options: Tensorflow or PyTorch. OPEN submissions can have custom data loaders. If a new data loader is added, or an existing data loader is changed, the DLIO code will need to be modified. | 3D U-Net: PyTorch (Torch Data Loader); ResNet-50: Tensorflow (Tensorflow Data Loader); Cosmoflow: Tensorflow |
+| Parameter                    | Description                                | Default                                                             |
+|------------------------------|--------------------------------------------|---------------------------------------------------------------------|
+| framework                    | The machine learning framework.            | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow |
+|                              |                                            |                                                                     |
+| *Dataset parameters*         |                                            |                                                                     |
+| dataset.format               | Format of the dataset.                     | 3D U-Net: .npz<br>ResNet-50: .tfrecord<br>Cosmoflow: .tfrecord      |
+| dataset.num_samples_per_file |                                            | 3D U-Net: 1<br>ResNet-50: 1251<br>Cosmoflow: 1                      |
+|                              |                                            |                                                                     |
+| *Reader parameters*          |                                            |                                                                     |
+| reader.data_loader           | Supported options: Tensorflow or PyTorch.  | 3D U-Net: PyTorch<br>ResNet-50: Tensorflow<br>Cosmoflow: Tensorflow |
 
-**OPEN division benchmark submissions must be run through the benchmark.sh script. The .yaml files cannot be changed (the workload cannot be changed).  The parameters can be changed only via the command line in order to more-explicitly document what was changed.**
 
+#### 10.2.1 OPEN: num_samples_per_file
+Changing this parameter is supported only with Tensorflow, using tfrecord datasets. Currently, the benchmark code only supports num_samples_per_file = 1 for Pytorch data loader. To support other values, the data loader needs to be adjusted.
+
+#### 10.2.2 OPEN: data_loader
+OPEN submissions can have custom data loaders. If a new data loader is added, or an existing data loader is changed, the DLIO code will need to be modified.
+
+#### 10.2.3 Execution of OPEN submissions
 OPEN division benchmarks must be referred to using the benchmark name plus the term OPEN, e.g. “The system was able to support N ACME X100 accelerators running an OPEN division 3D U-Net workload at only 8% less than optimal performance.”
 
 ## 11. Submission
@@ -470,108 +569,150 @@ root_folder (or any name you prefer)
 ├── Closed
 │ 	└──<submitter_org>
 │		├── code
-│		├── generation_logs
 │		├── results
-│		│	├──system-name-1
-│		│	│	├── unet3d-a100
-│		│	│	│	└── ..
-│		│	│	├── unet3d-h100
-│		│	│	│	└── ..
-|		│	|	├── resnet-a100
-│		│	│	│	└── ..
-|		│	|	├── resnet-h100
-│		│	│	│	└── ..
-|		│	|	├── cosmoflow-a100	
-│		│	│	|	└── ..
-|		│	|	└── cosmoflow-h100	
-│		│	│	|	└── ..
-|		│	|	└── llama-8b	
-│		│	│	|	└── ..
-|		│	|	└── llama-70b	
-│		│	│	|	└── ..
-|		│	|	└── llama-405b	
-│		│	│	|	└── ..
-|		│	|	└── llama-1t	
-│		│	│		└── ..
-│		│	└──system-name-2
-│		│	 	├── unet3d-a100
-│		│	 	│	└── ..
-│		│	 	├── unet3d-h100
-│		│	 	│	└── ..
-|		│	 	├── resnet-a100
-│		│	 	│	└── ..
-|		│	 	├── resnet-h100
-│		│	 	│	└── ..
-|		│	 	├── cosmoflow-a100	
-│		│	 	|	└── ..
-|		│	 	├── cosmoflow-h100	
-│		│	 	|	└── ..
-│		│	 	├── llama-8b	
-│		│	 	|	└── ..
-|		│	 	├──llama-70b	
-│		│	 	|	└── ..
-|		│		├── llama-405b	
-│		│	 	|	└── ..
-│		│	 	└── llama-1t	
-│		│	 		└── ..
+│		│	└──system-name-1
+│		│	 	├── training
+│		│	 	│	├── unet3d
+│		│		│	│	├── datagen
+│		│		│	│	│	└── YYYYMMDD_HHmmss
+│		│		│	│	│		└── dlio_log_files
+│		│		│	│	└── run
+│		│		│	│		├── YYYYMMDD_HHmmss
+│		│		│	│		│	└── dlio_log_files 
+│		│		│	│		... (5x Runs per Emulated Accelerator Type)
+│		│		│	│		└── YYYYMMDD_HHmmss
+│		│		│	│			└── dlio_log_files
+│		│	 	│	├── resnet50
+│		│		│	│	├── datagen
+│		│		│	│	│	└── YYYYMMDD_HHmmss
+│		│		│	│	│		└── dlio_log_files
+│		│		│	│	└── run
+│		│		│	│		├── YYYYMMDD_HHmmss
+│		│		│	│		│	└── dlio_log_files 
+│		│		│	│		... (5x Runs per Emulated Accelerator Type)
+│		│		│	│		└── YYYYMMDD_HHmmss
+│		│		│	│			└── dlio_log_files
+│		│	 	│	└── cosmoflow
+│		│		│	 	├── datagen
+│		│		│	 	│	└── YYYYMMDD_HHmmss
+│		│		│	 	│		└── dlio_log_files
+│		│		│	 	└── run
+│		│		│	 		├── YYYYMMDD_HHmmss
+│		│		│	 		│	└── dlio_log_files 
+│		│		│	 		... (5x Runs per Emulated Accelerator Type)
+│		│		│	 		└── YYYYMMDD_HHmmss
+│		│		│	 			└── dlio_log_files
+│		│	 	└── checkpointing
+│		│	 		├── llama3-8b
+│		│			│	├── YYYYMMDD_HHmmss
+│		│			│	│	└── dlio_log_files 
+│		│			 	... (10x Runs for Read and Write. May be combined in a single run)
+│		│			│	└── YYYYMMDD_HHmmss
+│		│			│		└── dlio_log_files
+│		│	 		├── llama3-70b
+│		│			│	├── YYYYMMDD_HHmmss
+│		│			│	│	└── dlio_log_files 
+│		│			 	... (10x Runs for Read and Write. May be combined in a single run)
+│		│			│	└── YYYYMMDD_HHmmss
+│		│			│		└── dlio_log_files
+│		│	 		├── llama3-405b
+│		│			│	├── YYYYMMDD_HHmmss
+│		│			│	│	└── dlio_log_files 
+│		│			 	... (10x Runs for Read and Write. May be combined in a single run)
+│		│			│	└── YYYYMMDD_HHmmss
+│		│			│		└── dlio_log_files
+│		│	 		└── llama3-1t
+│		│			 	├── YYYYMMDD_HHmmss
+│		│			 	│	└── dlio_log_files 
+│		│			 	... (10x Runs for Read and Write. May be combined in a single run)
+│		│				└── YYYYMMDD_HHmmss
+│		│			 		└── dlio_log_files
 │		└── systems
-│			system-name-1.json
-│			system-name-1.pdf
-│			system-name-2.json
-│			system-name-2.pdf
+│			├──system-name-1.yaml
+│			├──system-name-1.pdf
+│			├──system-name-2.yaml
+│			└──system-name-2.pdf
 │
 └── Open
  	└──<submitter_org>
 		├── code
- 		├── generation_logs
- 		├── results
- 		│	├──system-name-1
- 		│	│	├── unet3d-a100
- 		│	│	│	└── ..
- 		│	│	├── unet3d-h100
- 		│	│	│	└── ..
- 		│	|	├── resnet-a100
- 		│	│	│	└── ..
- 		│	|	├── resnet-h100
- 		│	│	│	└── ..
- 		│	|	├── cosmoflow-a100	
- 		│	│	|	└── ..
- 		│	|	└── cosmoflow-h100	
-│		│	│	|	└── ..
-|		│	|	└── llama-8b	
-│		│	│	|	└── ..
-|		│	|	└── llama-70b	
-│		│	│	|	└── ..
-|		│	|	└── llama-405b	
-│		│	│	|	└── ..
-|		│	|	└── llama-1t	
-│		│	│		└── .. 
- 		│	└──system-name-2
- 		│	 	├── unet3d-a100
- 		│	 	│	└── ..
- 		│	 	├── unet3d-h100
- 		│	 	│	└── ..
- 		│	 	├── resnet-a100
- 		│	 	│	└── ..
- 		│	 	├── resnet-h100
- 		│	 	│	└── ..
- 		│	 	├── cosmoflow-a100	
- 		│	 	|	└── ..
- 		│	 	└── cosmoflow-h100	
-│		│	 	|	└── ..
-│		│	 	├── llama-8b	
-│		│	 	|	└── ..
-|		│	 	├──llama-70b	
-│		│	 	|	└── ..
-|		│		├── llama-405b	
-│		│	 	|	└── ..
-│		│	 	└── llama-1t	
-│		│	 		└── ..
+		├── results
+		│	└──system-name-1
+		│	 	├── training
+		│	 	│	├── unet3d
+		│		│	│	├── datagen
+		│		│	│	│	└── YYYYMMDD_HHmmss
+		│		│	│	│		└── dlio_log_files
+		│		│	│	└── run
+		│		│	│		├── YYYYMMDD_HHmmss
+		│		│	│		│	└── dlio_log_files 
+		│		│	│		... (5x Runs per Emulated Accelerator Type)
+		│		│	│		└── YYYYMMDD_HHmmss
+		│		│	│			└── dlio_log_files
+		│	 	│	├── resnet50
+		│		│	│	├── datagen
+		│		│	│	│	└── YYYYMMDD_HHmmss
+		│		│	│	│		└── dlio_log_files
+		│		│	│	└── run
+		│		│	│		├── YYYYMMDD_HHmmss
+		│		│	│		│	└── dlio_log_files 
+		│		│	│		... (5x Runs per Emulated Accelerator Type)
+		│		│	│		└── YYYYMMDD_HHmmss
+		│		│	│			└── dlio_log_files
+		│	 	│	└── cosmoflow
+		│		│	 	├── datagen
+		│		│	 	│	└── YYYYMMDD_HHmmss
+		│		│	 	│		└── dlio_log_files
+		│		│	 	└── run
+		│		│	 		├── YYYYMMDD_HHmmss
+		│		│	 		│	└── dlio_log_files 
+		│		│	 		... (5x Runs per Emulated Accelerator Type)
+		│		│	 		└── YYYYMMDD_HHmmss
+		│		│	 			└── dlio_log_files
+		│	 	└── checkpointing
+		│	 		├── llama3-8b
+		│			│	├── YYYYMMDD_HHmmss
+		│			│	│	└── dlio_log_files 
+		│			│	... (10x Runs for Read and Write. May be combined in a single run)
+		│			│	└── YYYYMMDD_HHmmss
+		│			│		└── dlio_log_files
+		│	 		├── llama3-70b
+		│			│	├── YYYYMMDD_HHmmss
+		│			│	│	└── dlio_log_files 
+		│			│	... (10x Runs for Read and Write. May be combined in a single run)
+		│			│	└── YYYYMMDD_HHmmss
+		│			│		└── dlio_log_files
+		│	 		├── llama3-405b
+		│			│	├── YYYYMMDD_HHmmss
+		│			│	│	└── dlio_log_files 
+		│			│	... (10x Runs for Read and Write. May be combined in a single run)
+		│			│	└── YYYYMMDD_HHmmss
+		│			│		└── dlio_log_files
+		│	 		└── llama3-1t
+		│			 	├── YYYYMMDD_HHmmss
+		│			 	│	└── dlio_log_files 
+		│			│	... (10x Runs for Read and Write. May be combined in a single run)
+		│				└── YYYYMMDD_HHmmss
+		│			 		└── dlio_log_files
 		└── systems
-			system-name-1.json
-			system-name-1.pdf
-			system-name-2.json
-			system-name-2.pdf
+			├──system-name-1.yaml
+			├──system-name-1.pdf
+			├──system-name-2.yaml
+			└──system-name-2.pdf
+```
+
+#### 11.3.1 DLIO Log Files Required
+The Training and Checkpointing workloads both use DLIO to execute the test. The following files are required for every run in a submission:
+```
+YYYYMMDD_HHmmss
+├── [training|checkpointing]_[datagen|run].stdout.log   # Captured manually if running DLIO directly. mlpstorage captures this automatically
+├── [training|checkpointing]_[datagen|run].stderr.log   # Captured manually if running DLIO directly. mlpstorage captures this automatically
+├── dlio.log
+└── dlio_config | .hydra_config                         # Running DLIO manually creates a ".hydra_config" directory. mlpstorage names this "dlio_config"
+   ├── config.yaml
+   ├── hydra.yaml
+   └── overrides.yaml
+
 ```
 
 ### 11.4 System Description
@@ -657,6 +798,10 @@ System component and power supply unit names in the above tables are examples. C
 **System Topology**
 The system topology needs to show logical connections between the nodes and network devices listed in the system-description.yaml. The simplest form is made up of squares and lines with a square for each node and a line for each connection between the nodes. Every node listed in the system-description.yaml needs to have a representative visual in the topology diagram. For large deployments (larger than 4 nodes), use an appropriate scaling notation. For example, in a solution of 16 identical client nodes, show squares for the first and last nodes (with node names and numbers in the nodes) separated by "...". 
 
+**Mandatory Rack Units Requirements**
+
+If the system requires the physical deployment of dedicated hardware, ie: is not a cloud-based deployment or a hyperconverged deployment, you will need to include the total number of rack units that will be consumed by the storage system under test in the SystemDescription file(s), plus any supporting gear that is required for the configuration being tested.  That supporting gear could include, for example, network switches for a "backend" or private network that is required for the storage system to operate.  The rack units measure does not need to include any of the gear that connects the storage system to the ``host nodes``.
+
 **Optional information**
 
 The following *recommended* structure of systems.pdf provides a starting point for additional optional information. Submitters are free to adjust this structure as they see fit.
@@ -665,7 +810,7 @@ If the submission is for a commercial system, a pdf of the product spec document
 
 - Recommended: High-level system diagram e.g., showing the ``host node``(s), storage system main components, and network topology used when connecting everything (e.g., spine-and-leaf, butterfly, etc.), and any non-default configuration options that were set during the benchmark run.
 - Optional: Additional text description of the system, if the information is not captured in the JSON, e.g., the storage system’s components (make and model, optional features, capabilities, etc) and all configuration settings that are relevant to ML/AI benchmarks.  If the make/model doesn’t specify all the components of the hardware platform it is running on, eg: it’s an Software-Defined-Storage product, then those should be included here (just like the client component list).
-- Optional: physical requirements – If the system requires the physical deployment of hardware, consider including the number of rack units, required supporting equipment, and any physical constraints on how the equipment must be installed into an industry-standard rack, such as required spacing, weight constraints, etc. We recommended the following three categories for the text description:
+- Optional: We recommended the following three categories for the text description:
   1. Software, 
   2. Hardware, and
   3. Settings.
