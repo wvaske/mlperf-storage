@@ -66,6 +66,8 @@ The MLPerf name and logo are trademarks of the MLCommons® Association ("MLCommo
 
 This version of the benchmark does not include offline or online data pre-processing. We are aware that data pre-processing is an important part of the ML data pipeline and we will include it in a future version of the benchmark.
 
+Each benchmark setup must be executed a number of times (5 for training and 10 for checkpointing). All logs from every run must be submitted as part of a submission package. The final metrics are the average across the runs. Runs must be consecutive with no failed runs between the submitted runs. Runs can not be cherry-picked from a range of runs excepting that all five runs are consecutive within the large sequence of runs.
+
 ### 2.1 Training
 
 MLPerf Storage emulates accelerators for the training workloads with the tool DLIO developed by Argonne National Labs. DLIO uses the standard AI frameworks (PyTorch, Tensorflow, Numpy, etc) to load data from storage to memory at the same intensity as a given accelerator.
@@ -261,12 +263,12 @@ For OPEN submissions, the total number of processes may be increased in multiple
 **Table 3: Configuration parameters and their mutability in CLOSED and OPEN divisions**
 
 | Parameter                          | Meaning                                      | Default value                                 | Changeable in CLOSE | Changeable in OPEN |
-|-----------------------------------|----------------------------------------------|-----------------------------------------------|----------------------|---------------------|
-| --ppn                             | Number of processes per node                      | N/A                                           | YES (minimal 4)      | YES (minimal 4)     |
-| --num-processes                    | Total number of processes                         | Node local: 8<br>Global: the value in Table 1 | NO                   | YES                 |
-| --checkpoint-folder      | The folder to save the checkpoint data       | checkpoint/{workload}                         | YES                  | YES                 |
-| --num-checkpoints-write | Number of write checkpoints                  | 10 or 0**                                     | NO              | NO                  |
-| --num-checkpoints-read     | Number of write checkpoints                  | 10 or 0**                                     | NO                   | NO                  |
+|------------------------------------|----------------------------------------------|-----------------------------------------------|---------------------|--------------------|
+| --ppn                              | Number of processes per node                 | N/A                                           | YES (minimal 4)     | YES (minimal 4)    |
+| --num-processes                    | Total number of processes                    | Node local: 8<br>Global: the value in Table 1 | NO                  | YES                |
+| --checkpoint-folder                | The folder to save the checkpoint data       | checkpoint/{workload}                         | YES                 | YES                |
+| --num-checkpoints-write            | Number of write checkpoints                  | 10 or 0**                                     | NO                  | NO                 |
+| --num-checkpoints-read             | Number of write checkpoints                  | 10 or 0**                                     | NO                  | NO                 |
 
 ** By default, --num-checkpoints-read and --num-checkpoints-write are set to be 10. To perform write only, one has to turn off read by explicitly setting ``--num-checkpoints-read=0``; to perform read only, one has to turn off write by explicitly set  ``--num-checkpoints-write=0``
 
