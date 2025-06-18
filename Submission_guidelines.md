@@ -188,7 +188,7 @@ We report the checkpoint time per write / read and I/O throughput from each rank
 	* The metric for duration is the maximum time across all GPUs.
 	* The metric for throughput is the minimum across all GPUs.
 
-Each benchmark setup must be executed five times, and logs from all five runs must be submitted. The final metrics are the average across the five runs.
+Each benchmark setup must be executed five times, and logs from all five runs must be submitted. The final metrics are the average across the five runs. Runs must be consecutive with not failed runs between the selected runs. Runs can not be cherry picked from a range of runs excepting that all five runs are consecutive within the large sequence of runs.
 
 
 #### 2.2.5 OPEN vs CLOSE submissions
@@ -586,6 +586,14 @@ Note that, during the review period, submitters may be asked to include addition
 The system description yaml is a hybrid human-readable and machine-readable description of the total system under test. It contains fields for the System overall, the Nodes that make up the solution (clients and storage), as well as Power information of the nodes.
 
 An example can be found [HERE](https://github.com/mlcommons/storage/blob/main/system_configuration.yaml)
+
+The fields in the example document are required unless otherwise called out. Of particular note are the following:
+
+ - **System.type**
+   - Can choose from local-storage, hyper-converged, shared-[file|block|object], cloud-deployment
+ - **System.required_rack_units**
+   - This is the total rackspace required by the solution as deployed including any required backend networking (but not including the client network)
+
 
 #### 11.4.2 System Description PDF
 
