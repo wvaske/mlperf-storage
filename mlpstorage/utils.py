@@ -326,7 +326,7 @@ class CommandExecutor:
         self._original_handlers = {}
 
 
-def generate_mpi_prefix_cmd(mpi_cmd, hosts, num_processes, oversubscribe, allow_run_as_root, logger):
+def generate_mpi_prefix_cmd(mpi_cmd, hosts, num_processes, oversubscribe, allow_run_as_root, params, logger):
     # Check if we got slot definitions with the hosts:
     slots_configured = False
     for host in hosts:
@@ -368,5 +368,9 @@ def generate_mpi_prefix_cmd(mpi_cmd, hosts, num_processes, oversubscribe, allow_
 
     if allow_run_as_root:
         prefix += " --allow-run-as-root"
+
+    if params:
+        for param in params:
+            prefix += f" {param}"
 
     return prefix

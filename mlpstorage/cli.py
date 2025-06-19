@@ -253,6 +253,7 @@ def add_mpi_group(parser):
     mpi_options.add_argument('--mpi-bin', choices=MPI_CMDS, default="mpirun", help=help_messages['mpi_bin'])
     mpi_options.add_argument('--oversubscribe', action="store_true")
     mpi_options.add_argument('--allow-run-as-root', action="store_true")
+    mpi_options.add_argument('--mpi-params', nargs="+", type=str, action="append", help="Other MPI parameters that will be passed to MPI")
 
 
 def add_training_arguments(training_parsers):
@@ -449,6 +450,10 @@ def update_args(args):
     if args.params:
         flattened_params = [item for sublist in args.params for item in sublist]
         setattr(args, 'params', flattened_params)
+
+    if args.mpi_params:
+        flattened_mpi_params = [item for sublist in args.mpi_params for item in sublist]
+        setattr(args,'mpi_params', flattened_mpi_params)
 
     if hasattr(args, 'hosts'):
         print(f'Hosts is: {args.hosts}')

@@ -8,7 +8,7 @@ framework: pytorch
 workflow:
   generate_data: False
   train: True
-  checkpoint: True
+  checkpoint: False
 
 dataset: 
   data_folder: data/unet3d/

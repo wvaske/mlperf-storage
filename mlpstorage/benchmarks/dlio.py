@@ -112,7 +112,8 @@ class DLIOBenchmark(Benchmark, abc.ABC):
         if self.args.exec_type == EXEC_TYPE.MPI:
             self.logger.debug(f'Generating MPI Command with binary "{self.args.mpi_bin}"')
             mpi_prefix = generate_mpi_prefix_cmd(self.args.mpi_bin, self.args.hosts, self.args.num_processes,
-                                                 self.args.oversubscribe, self.args.allow_run_as_root, self.logger)
+                                                 self.args.oversubscribe, self.args.allow_run_as_root,
+                                                 self.args.mpi_params, self.logger)
             cmd = f"{mpi_prefix} {cmd}"
 
         return cmd
@@ -302,12 +303,11 @@ class CheckpointingBenchmark(DLIOBenchmark):
         for rank in range(self.args.num_processes):
             rank_gb.append(0)
             if zero_level == 1:
-                if rank == 0:
-                    rank_gb[rank] = model_gb + (optimizer_gb / self.args.num_processes)
-                    self.logger.debug(f'Rank {rank} writes entire model: {rank_gb[rank]:.2f} GB')
-                else:
-                    rank_gb[rank] = optimizer_gb / self.args.num_processes
-                    self.logger.debug(f'Rank {rank} writes optimizer: {rank_gb[rank]:.2f} GB')
+                self.logger.debug("Optimizer is written by all ranks, but only the ranks on the first DP instance write the model")
+                rank_gb[rank] = optimizer_gb / self.args.num_processes
+                if rank < GPUpDP:
+                    rank_gb[rank] += model_gb / GPUpDP
+                    self.logger.debug(f'First DP: rank-{rank} write model: {rank_gb[rank]:.2f} GB')
             elif zero_level == 3:
                 rank_gb[rank] = (model_gb + optimizer_gb) / self.args.num_processes
                 self.logger.debug(f'Rank {rank} writes portion of model and optimizer: {rank_gb[rank]:.2f} GB')
