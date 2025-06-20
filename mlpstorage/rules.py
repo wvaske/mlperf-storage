@@ -310,6 +310,7 @@ class BenchmarkRun:
             
         self.benchmark_type = None
         self.model = None
+        self.accelerator = None
         self.command = None
         self.num_processes = None
         self.parameters = dict()
@@ -317,6 +318,8 @@ class BenchmarkRun:
         self.system_info = None
         self.metrics = {}
         self._run_id = None
+        self._category = None
+        self._issues = []
         self.run_datetime = None
         self.result_root_dir = None
 
@@ -338,6 +341,22 @@ class BenchmarkRun:
         self.logger.info(f"Found benchmark run: {self.run_id}")
 
     @property
+    def issues(self):
+        return self._issues
+
+    @issues.setter
+    def issues(self, issues):
+        self._issues = issues
+
+    @property
+    def category(self):
+        return self._category
+
+    @category.setter
+    def category(self, category):
+        self._category = category
+
+    @property
     def run_id(self):
         if self.post_execution:
             return self.benchmark_result.benchmark_result_root_dir
@@ -346,15 +365,20 @@ class BenchmarkRun:
 
     def as_dict(self):
         """Convert the BenchmarkRun object to a dictionary"""
-        return {
+        ret_dict = {
             "run_id": str(self.run_id),
             "benchmark_type": self.benchmark_type.name,
             "model": self.model,
             "command": self.command,
+            "num_processes": self.num_processes,
             "parameters": self.parameters,
             "system_info": self.system_info.as_dict() if self.system_info else None,
             "metrics": self.metrics,
         }
+        if self.accelerator:
+            ret_dict["accelerator"] = str(self.accelerator)
+
+        return ret_dict
 
     def _process_benchmark_instance(self, benchmark_instance):
         """Extract parameters and system info from a running benchmark instance"""
@@ -382,12 +406,15 @@ class BenchmarkRun:
         # Process the summary and hydra configs to find what was run
         summary_workload = benchmark_result.summary.get('workload', {})
         hydra_workload_config = benchmark_result.hydra_configs.get("config.yaml", {}).get("workload", {})
+        hydra_workload_overrides = benchmark_result.hydra_configs.get("overrides.yaml", {})
         hydra_workflow = hydra_workload_config.get("workflow", {})
         workflow = (
             hydra_workflow.get('generate_data', {}),
             hydra_workflow.get('train', {}),
             hydra_workflow.get('checkpoint', {}),
         )
+        workloads = [i for i in hydra_workload_overrides if i.startswith('workload=')]
+
         # Get benchmark type based on workflow
         if workflow[0] or workflow[1]:
             # Unet3d can have workflow[2] == True but it'll get caught here first
@@ -395,7 +422,13 @@ class BenchmarkRun:
         elif workflow[2]:
             self.benchmark_type = BENCHMARK_TYPES.checkpointing
 
+        # The model for checkpointing in dlio doesn't have the "3" and we match against inputs to the cli which
+        # use a hypen instead of an underscore. We should make this better in the next version
+        # TODO: Make this better
         self.model = hydra_workload_config.get('model', {}).get("name")
+        self.model = self.model.replace("llama_", "llama3_")
+        self.model = self.model.replace("_", "-")
+
         self.num_processes = benchmark_result.summary["num_accelerators"]
 
         # Set command for training
@@ -404,6 +437,7 @@ class BenchmarkRun:
                 # If "workflow.train" is present, even if there is checkpoint or datagen, it's a run_benchmark.
                 # When running DLIO with datagen and run in a single run, the metrics are still available separately
                 self.command = "run_benchmark"
+                self.accelerator = workloads[0].split('_')[1]
             if workflow[0]:
                 # If we don't get caught by run and workflow[0] (datagen) is True, then we have a datagen command
                 self.command = "datagen"
@@ -422,10 +456,9 @@ class BenchmarkRun:
 
 class RulesChecker(abc.ABC):
     """
-    Base class for rule checkers that verify benchmark runs against rules.
+    Base class for rule checkers that verify call the self.check_* methods
     """
-    def __init__(self, benchmark_run, logger):
-        self.benchmark_run = benchmark_run
+    def __init__(self, logger, *args, **kwargs):
         self.logger = logger
         self.issues = []
         
@@ -454,14 +487,57 @@ class RulesChecker(abc.ABC):
                 ))
         
         return self.issues
-    
-    @abc.abstractmethod
-    def check_benchmark_type(self) -> Optional[Issue]:
-        """Check if the benchmark type is valid"""
-        pass
 
 
-class TrainingRulesChecker(RulesChecker):
+class RunRulesChecker(RulesChecker):
+    """
+    This class verifies rules against individual benchmark runs.
+    """
+
+    def __init__(self, benchmark_run, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.benchmark_run = benchmark_run
+
+
+class MultiRunRulesChecker(RulesChecker):
+    """Rules checker for multiple benchmark runs as for a single workload or for the full submission"""
+
+    def __init__(self, benchmark_runs, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if type(benchmark_runs) not in [list, tuple]:
+            raise TypeError("benchmark_runs must be a list or tuple")
+        self.benchmark_runs = benchmark_runs
+
+    def check_runs_valid(self) -> Optional[Issue]:
+        category_set = {run.category for run in self.benchmark_runs}
+        if PARAM_VALIDATION.INVALID in category_set:
+            return Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message="Invalid runs found.",
+                parameter="category",
+                expected="OPEN or CLOSED",
+                actual=[cat.value.upper() for cat in category_set]
+            )
+        elif PARAM_VALIDATION.OPEN in category_set:
+            return Issue(
+                validation=PARAM_VALIDATION.OPEN,
+                message="All runs satisfy the OPEN or CLOSED category",
+                parameter="category",
+                expected="OPEN or CLOSED",
+                actual=[cat.value.upper() for cat in category_set]
+            )
+        elif {PARAM_VALIDATION.CLOSED} == category_set:
+            return Issue(
+                validation=PARAM_VALIDATION.CLOSED,
+                message="All runs satisfy the CLOSED category",
+                parameter="category",
+                expected="OPEN or CLOSED",
+                actual=[cat.value.upper() for cat in category_set]
+            )
+        return None
+
+
+class TrainingRunRulesChecker(RunRulesChecker):
     """Rules checker for training benchmarks"""
     
     def check_benchmark_type(self) -> Optional[Issue]:
@@ -606,34 +682,132 @@ class TrainingRulesChecker(RulesChecker):
         pass
 
 
-
-
-class CheckpointingRulesChecker(RulesChecker):
+class CheckpointingRunRulesChecker(RunRulesChecker):
     """Rules checker for checkpointing benchmarks"""
     def check_benchmark_type(self) -> Optional[Issue]:
         pass
 
 
-class BenchmarkRunVerifier:
+#######################################################################################################################
+# Define the checkers for groups of runs representing submissions
+#######################################################################################################################
 
-    def __init__(self, benchmark_run, logger):
-        if isinstance(benchmark_run, BenchmarkRun):
-            self.benchmark_run = benchmark_run
-        elif "mlpstorage.benchmarks." in str(type(benchmark_run)):
-            self.benchmark_run = BenchmarkRun(benchmark_instance=benchmark_run, logger=logger)
+class CheckpointSubmissionRulesChecker(MultiRunRulesChecker):
+    supported_models = LLM_MODELS
 
+    def check_num_runs(self) -> Optional[Issue]:
+        """
+        Require 10 total writes and 10 total reads for checkpointing benchmarks.  It's possible for a submitter
+         to have a single run with all checkpoints, two runs that separate reads and writes, or individual runs
+         for each read and write operation.
+        """
+        issues = []
+        num_writes = num_reads = 0
+        for run in self.benchmark_runs:
+            if run.benchmark_type == BENCHMARK_TYPES.checkpointing:
+                num_writes += run.parameters.get('checkpoint', {}).get('num_checkpoints_write', 0)
+                num_reads += run.parameters.get('checkpoint', {}).get('num_checkpoints_read', 0)
+
+        if not num_reads == 10:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Expected 10 total read operations, but found {num_reads}",
+                parameter="checkpoint.num_checkpoints_read",
+                expected=10,
+                actual=num_reads
+            ))
+        else:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.CLOSED,
+                message=f"Found expected 10 total read operations",
+                parameter="checkpoint.num_checkpoints_read",
+                expected=10,
+                actual=num_reads
+            ))
+
+        if not num_writes == 10:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Expected 10 total write operations, but found {num_writes}",
+                parameter="checkpoint.num_checkpoints_write",
+                expected=10,
+                actual=num_writes
+            ))
+        else:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.CLOSED,
+                message=f"Found expected 10 total write operations",
+                parameter="checkpoint.num_checkpoints_write",
+                expected=10,
+                actual=num_writes
+            ))
+
+        if num_writes == 10 and num_reads == 10:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.CLOSED,
+                message=f"Found expected 10 total read and write operations",
+                parameter="checkpoint.num_checkpoints_read",
+                expected=10,
+                actual=10,
+            ))
+
+        return issues
+
+
+class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
+    supported_models = MODELS
+
+    def check_num_runs(self) -> Optional[Issue]:
+        """
+        Require 5 runs for training benchmarks
+        """
+
+class BenchmarkVerifier:
+
+    def __init__(self, *benchmark_runs, logger=None):
         self.logger = logger
         self.issues = []
 
-        if self.benchmark_run.benchmark_type == BENCHMARK_TYPES.training:
-            self.rules_checker = TrainingRulesChecker(self.benchmark_run, logger)
-        elif self.benchmark_run.benchmark_type == BENCHMARK_TYPES.checkpointing:
-            self.rules_checker = CheckpointingRulesChecker(self.benchmark_run, logger)
+        if len(benchmark_runs) == 1:
+            self.mode = "single"
+        elif len(benchmark_runs) > 1:
+            self.mode = "multi"
+        else:
+            raise ValueError("At least one benchmark run is required")
+
+        self.benchmark_runs = benchmark_runs
+        if self.mode == "single":
+            if "mlpstorage.benchmarks." in str(type(benchmark_runs[0])):
+                # This is here if we get a Benchmark instance that needs to run the verifier
+                # on itself before execution. We map it to a BenchmarkRun instance
+                # We check against the string so we don't need to import the Benchmark classes here
+                self.benchmark_runs = [BenchmarkRun(benchmark_instance=benchmark_runs[0], logger=logger)]
+
+            benchmark_run = self.benchmark_runs[0]
+            if benchmark_run.benchmark_type == BENCHMARK_TYPES.training:
+                self.rules_checker = TrainingRunRulesChecker(benchmark_run, logger)
+            elif benchmark_run.benchmark_type == BENCHMARK_TYPES.checkpointing:
+                self.rules_checker = CheckpointingRunRulesChecker(benchmark_run, logger)
+
+        elif self.mode == "multi":
+            benchmark_types = {br.benchmark_type for br in benchmark_runs}
+            if len(benchmark_types) > 1:
+                raise ValueError("Multi-run verification requires all runs are from the same benchmark type. Got types: {benchmark_types}")
+            else:
+                benchmark_type = benchmark_types.pop()
+
+            if benchmark_type == BENCHMARK_TYPES.training:
+                self.rules_checker = TrainingSubmissionRulesChecker(benchmark_runs, logger)
+            if benchmark_type == BENCHMARK_TYPES.checkpointing:
+                self.rules_checker = CheckpointSubmissionRulesChecker(benchmark_runs, logger)
 
     def verify(self) -> PARAM_VALIDATION:
-        self.logger.status(f"Verifying benchmark run for {self.benchmark_run.run_id}")
+        run_ids = [br.run_id for br in self.benchmark_runs]
+        if self.mode == "single":
+            self.logger.status(f"Verifying benchmark run for {run_ids[0]}")
+        elif self.mode == "multi":
+            self.logger.status(f"Verifying benchmark runs for {', '.join(run_ids)}")
         self.issues = self.rules_checker.run_checks()
-        self.benchmark_run.issues = self.issues
         num_invalid = 0
         num_open = 0
         num_closed = 0
@@ -651,14 +825,23 @@ class BenchmarkRunVerifier:
             else:
                 raise ValueError(f"Unknown validation type: {issue.validation}")
 
+        if self.mode == "single":
+            self.benchmark_runs[0].issues = self.issues
+
         if num_invalid > 0:
-            self.logger.status(f'Benchmark run is INVALID due to {num_invalid} issues ({self.benchmark_run.run_id})')
+            self.logger.status(f'Benchmark run is INVALID due to {num_invalid} issues ({run_ids})')
+            if self.mode == "single":
+                self.benchmark_runs[0].category = PARAM_VALIDATION.INVALID
             return PARAM_VALIDATION.INVALID
         elif num_open > 0:
-            self.logger.status(f'Benchmark run qualifies for OPEN category ({self.benchmark_run.run_id})')
+            if self.mode == "single":
+                self.benchmark_runs[0].category = PARAM_VALIDATION.OPEN
+            self.logger.status(f'Benchmark run qualifies for OPEN category ({run_ids})')
             return PARAM_VALIDATION.OPEN
         else:
-            self.logger.status(f'Benchmark run qualifies for CLOSED category ({self.benchmark_run.run_id})')
+            if self.mode == "single":
+                self.benchmark_runs[0].category = PARAM_VALIDATION.CLOSED
+            self.logger.status(f'Benchmark run qualifies for CLOSED category ({run_ids})')
             return PARAM_VALIDATION.CLOSED
 
 

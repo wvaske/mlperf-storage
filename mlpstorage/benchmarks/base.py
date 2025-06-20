@@ -15,7 +15,7 @@ from pyarrow.ipc import open_stream
 from mlpstorage.config import PARAM_VALIDATION, DATETIME_STR, MLPS_DEBUG
 from mlpstorage.debug import debug_tryer_wrapper
 from mlpstorage.mlps_logging import setup_logging, apply_logging_options
-from mlpstorage.rules import BenchmarkRunVerifier, generate_output_location
+from mlpstorage.rules import BenchmarkVerifier, generate_output_location
 from mlpstorage.utils import CommandExecutor, MLPSJsonEncoder
 
 
@@ -123,7 +123,7 @@ class Benchmark(abc.ABC):
     def verify_benchmark(self) -> bool:
         self.logger.verboser(f'Verifying benchmark parameters: {self.args}')
         if not self.benchmark_run_verifier:
-            self.benchmark_run_verifier = BenchmarkRunVerifier(self, logger=self.logger)
+            self.benchmark_run_verifier = BenchmarkVerifier(self, logger=self.logger)
 
         self.verification = self.benchmark_run_verifier.verify()
         self.logger.verboser(f'Benchmark verification result: {self.verification}')

@@ -274,7 +274,6 @@ def add_training_arguments(training_parsers):
         #  prevents it from being use today but change when we add the capability
         if _parser != datagen:
             _parser.add_argument('--client-host-memory-in-gb', '-cm', type=int, required=True, help=help_messages['client_host_mem_GB'])
-            _parser.add_argument('--checkpoint-folder', '-cf', type=str, help=help_messages['checkpoint_folder'])
 
         _parser.add_argument('--exec-type', '-et', type=EXEC_TYPE, choices=list(EXEC_TYPE), default=EXEC_TYPE.MPI, help=help_messages['exec_type'])
 
@@ -318,7 +317,7 @@ def add_checkpointing_arguments(checkpointing_parsers):
         # We handle the subset param automatically if number of processes is less than number required for Closed
         # _parser.add_argument('--subset', action="store_true", help=help_messages["checkpoint_subset"])
         _parser.add_argument('--params', '-p', nargs="+", type=str, action="append", help=help_messages['params'])
-        _parser.add_argument("--checkpoint-folder", '-cf', type=str, help=help_messages['checkpoint_folder'])
+        _parser.add_argument("--checkpoint-folder", '-cf', type=str, required=True, help=help_messages['checkpoint_folder'])
         _parser.add_argument('--dlio-bin-path', '-dp', type=str, help="Path to DLIO binary. Default is the same as mlpstorage binary path")
 
 
@@ -408,14 +407,6 @@ def validate_args(args):
             error_messages.append("Invalid LLM model. Supported models are: {}".format(", ".join(LLM_MODELS)))
         if args.num_checkpoints_read < 0 or args.num_checkpoints_write < 0:
             error_messages.append("Number of checkpoints read and write must be non-negative")
-
-    # checkpoint-folder is required for unet in training and all checkpointing
-    if hasattr(args, 'checkpoint_folder') and not args.checkpoint_folder:
-        if args.model == UNET and args.command == "run":
-            if not args.allow_invalid_params:
-                error_messages.append("The argument '--checkpoint-folder' is required for training the Unet model")
-        if args.model in LLM_MODELS:
-            error_messages.append("The argument '--checkpoint-folder' is required for running checkpointing")
 
     if error_messages:
         for msg in error_messages:
