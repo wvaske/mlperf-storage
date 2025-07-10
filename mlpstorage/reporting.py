@@ -5,12 +5,13 @@ import pprint
 import sys
 
 from dataclasses import dataclass
+from statistics import mean, median, stdev
 from typing import List, Dict, Any
 
 from mlpstorage.mlps_logging import setup_logging, apply_logging_options
 from mlpstorage.config import MLPS_DEBUG, BENCHMARK_TYPES, EXIT_CODE, PARAM_VALIDATION, LLM_MODELS, MODELS, ACCELERATORS
 from mlpstorage.rules import get_runs_files, BenchmarkVerifier, BenchmarkRun, Issue
-from mlpstorage.utils import flatten_nested_dict, remove_nan_values
+from mlpstorage.utils import flatten_nested_dict, remove_nan_values, aggregate_run_metrics
 
 @dataclass
 class Result:
@@ -71,6 +72,7 @@ class ReportGenerator:
         benchmark_runs = get_runs_files(self.results_dir, logger=self.logger)
 
         self.logger.info(f'Accumulating results from {len(benchmark_runs)} runs')
+        # Process the individual runs and verify the logs against the rules
         for benchmark_run in benchmark_runs:
             self.logger.ridiculous(f'Processing run: \n{pprint.pformat(benchmark_run)}')
             verifier = BenchmarkVerifier(benchmark_run, logger=self.logger)
@@ -88,12 +90,13 @@ class ReportGenerator:
             )
             self.run_results[benchmark_run.run_id] = Result(**result_dict)
 
-        # Group runs for workload to run additional verifiers
+        # Group runs per workload to run additional verifiers
         # These will be manually defined as these checks align with a specific submission version
         # I need to group by model. For training workloads we also group by accelerator but the same checker
         # is used based on model.
         workload_runs = dict()
 
+        # "workload_runs" will contain a list of BenchmarkRun objects grouped by model and accelerator
         for benchmark_run in benchmark_runs:
             workload_key = (benchmark_run.model, benchmark_run.accelerator)
             if workload_key not in workload_runs.keys():
@@ -116,12 +119,18 @@ class ReportGenerator:
                 benchmark_model=runs[0].model,
                 issues=issues,
                 category=category,
-                metrics=dict()      # Add function to aggregate metrics
             )
+            if len(runs) > 1:
+                result_dict["metrics"] = aggregate_run_metrics([run.metrics for run in runs], agg_funcs=[mean,])
+            elif len(runs) == 1:
+                result_dict["metrics"] = runs[0].metrics
+
+
             self.workload_results[workload_key] = Result(**result_dict)
 
     def print_results(self):
         print("\n========================= Results Report =========================")
+        print("This report represents individual runs of benchmarks")
         for category in [PARAM_VALIDATION.CLOSED, PARAM_VALIDATION.OPEN, PARAM_VALIDATION.INVALID]:
             print(f"\n------------------------- {category.value.upper()} Report -------------------------")
             for result in self.run_results.values():
@@ -156,6 +165,7 @@ class ReportGenerator:
                     print("\n")
 
         print("\n========================= Submissions Report =========================")
+        print("This report represents aggregated runs of benchmarks for submissions")
         for category in [PARAM_VALIDATION.CLOSED, PARAM_VALIDATION.OPEN, PARAM_VALIDATION.INVALID]:
             print(f"\n------------------------- {category.value.upper()} Report -------------------------")
             for workload_key, workload_result in self.workload_results.items():
@@ -184,6 +194,22 @@ class ReportGenerator:
                             print(f'\t\t- {issue}')
                     else:
                         print(f'\t\t- No issues found')
+
+                    if workload_result.metrics:
+                        print(f'\t    Metrics:')
+                        for metric, value in sorted(workload_result.metrics.items()):
+                            if type(value) in (int, float):
+                                if "percentage" in metric.lower():
+                                    print(f'\t\t- {metric}: {value:,.1f}%')
+                                else:
+                                    print(f'\t\t- {metric}: {value:,.1f}')
+                            elif type(value) in (list, tuple):
+                                if "percentage" in metric.lower():
+                                    print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}%" for v in value)}')
+                                else:
+                                    print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}" for v in value)}')
+                            else:
+                                print(f'\t\t- {metric}: {value}')
 
                     print("\n")
 

@@ -7,6 +7,7 @@ import yaml
 from dataclasses import dataclass, field
 from datetime import datetime
 from pprint import pprint, pformat
+from statistics import mean
 from typing import List, Dict, Any, Optional, Tuple
 
 from mlpstorage.config import (MODELS, PARAM_VALIDATION, MAX_READ_THREADS_TRAINING, LLM_MODELS, BENCHMARK_TYPES,
@@ -250,11 +251,19 @@ class BenchmarkResult:
         self.metadata = None
         self.summary = None
         self.hydra_configs = {}
+        self.per_rank_per_epoch_stats = {}
+        self.per_rank_outputs = {}
         self.issues = []
         self._process_result_directory()
 
     def _process_result_directory(self):
         """Process the result directory to extract metadata and metrics"""
+        self._load_metadata_file()
+        self._load_dlio_summary_file()
+        self._load_hydra_configs()
+        self._load_per_rank_per_epoch_stats()
+
+    def _load_metadata_file(self):
         # Find and load metadata file
         metadata_files = [f for f in os.listdir(self.benchmark_result_root_dir)
                           if f.endswith('_metadata.json')]
@@ -268,6 +277,7 @@ class BenchmarkResult:
             except Exception as e:
                 self.logger.error(f"Failed to load metadata from {metadata_path}: {e}")
 
+    def _load_dlio_summary_file(self):
         # Find and load DLIO summary file
         summary_path = os.path.join(self.benchmark_result_root_dir, 'summary.json')
         self.logger.debug(f'Looking for DLIO summary at {summary_path}...')
@@ -279,9 +289,11 @@ class BenchmarkResult:
             except Exception as e:
                 self.logger.error(f"Failed to load DLIO summary from {summary_path}: {e}")
 
+    def _load_hydra_configs(self):
         # Find and load Hydra config files if they exist
         hydra_dir = os.path.join(self.benchmark_result_root_dir, HYDRA_OUTPUT_SUBDIR)
         self.logger.debug(f'Looking for Hydra configs at {hydra_dir}...')
+        # This should find config.yaml, hydra.yaml, and overrides.yaml as of DLIO for MLPS v2.0
         if os.path.exists(hydra_dir) and os.path.isdir(hydra_dir):
             for config_file in os.listdir(hydra_dir):
                 if config_file.endswith('.yaml'):
@@ -293,11 +305,80 @@ class BenchmarkResult:
                     except Exception as e:
                         self.logger.error(f"Failed to load Hydra config from {config_path}: {e}")
 
+    def _load_per_rank_per_epoch_stats(self):
+        # Find rank_per_epoch_stats json documents
+        # Data in EACH file will be in the format:
+        #  {
+        #       "<epoch_num>": {
+        #           "start": "<start_time>",
+        #           "end": "<end_time>",
+        #           "duration": <time_in_seconds>,
+        #
+        #           # For Training workloads we see block section with multiple epochs.
+        #           "block1": {
+        #               "start": "<start_time>",
+        #               "end": "<end_time>",
+        #               "duration": <time_in_seconds>
+        #           },
+        #
+        #
+        #           # For Checkpointing workloads we see save_ and load_ sections with a single epoch:
+        #           "save_ckpt1": {
+        #               "start": "<start_time>",
+        #               "end": "<end_time>",
+        #               "duration": <time_in_seconds>,
+        #               "throughput": <throughput_in_GBps>,
+        #           },
+        #           "load_ckpt1": {
+        #               "start": "<start_time>",
+        #               "end": "<end_time>",
+        #               "duration": <time_in_seconds>.
+        #               "throughput": <throughput_in_GBps>,
+        #           }
+        #       }
+        #  }
+
+        # This should find rank_per_epoch_stats.json files as of DLIO for MLPS v2.0
+        rank_per_epoch_stats_files = [f for f in os.listdir(self.benchmark_result_root_dir)
+                                      if f.endswith('_per_epoch_stats.json')]
+        self.per_rank_per_epoch_stats = self._read_per_rank_json_files(rank_per_epoch_stats_files)
+
+    def _load_per_rank_outputs(self):
+        # This should find rank_per_output.json files as of DLIO for MLPS v2.0
+        rank_output_files = [f for f in os.listdir(self.benchmark_result_root_dir)
+                                      if f.endswith('_output.json')]
+        self.per_rank_outputs = self._read_per_rank_json_files(rank_output_files)
+
+    def _read_per_rank_json_files(self, per_rank_files):
+        per_rank_content = {}
+        for rank_file in per_rank_files:
+            rank = rank_file.split('_')[0]
+            rank_output_path = os.path.join(self.benchmark_result_root_dir, rank_file)
+            try:
+                with open(rank_output_path, 'r') as f:
+                    rank_output = json.load(f)
+                per_rank_content[rank] = rank_output
+                self.logger.verbosest(f"Loaded rank_output from {rank_output_path}")
+            except Exception as e:
+                self.logger.error(f"Failed to load rank_output from {rank_output_path}: {e}")
+
+        return per_rank_content
+
 
 class BenchmarkRun:
     """
     Represents a benchmark run with all parameters and system information.
     Can be constructed either from a benchmark instance or from result files.
+
+    The purpose of this class is to provide a unified interface for RulesCheckers to run before a benchmark runs
+    and on the result files of a previously run benchmark. The interface to mlpstorage doesn't completely match
+    the output format of DLIO.
+
+    I'm not a big fan of this double abstraction and it should get refactored in the next release. The problem was
+    that this code was developed with the understanding that a benchmark could only be run with mlpstorage. Late in
+    the process I realized that DLIO could be run directly and we need to be able to read the results from DLIO
+    without the benefit of the metadata that mlpstorage writes. This was the least work method to support the
+    manual-DLIO use case, it was not the best design.
     """
     def __init__(self, benchmark_result=None, benchmark_instance=None, logger=None):
         self.logger = logger
@@ -331,6 +412,7 @@ class BenchmarkRun:
             self.post_execution = False
         elif benchmark_result:
             self._process_benchmark_result(benchmark_result)
+            self._process_result_metrics()
             self.post_execution = True
         else:
             self.logger.error(f"Neither benchmark_result nor benchmark_instance provided.")
@@ -436,6 +518,7 @@ class BenchmarkRun:
             if workflow[1]:
                 # If "workflow.train" is present, even if there is checkpoint or datagen, it's a run_benchmark.
                 # When running DLIO with datagen and run in a single run, the metrics are still available separately
+                #   This is only if DLIO is run manually, mlpstorage can't do train & datagen in a single command
                 self.command = "run_benchmark"
                 self.accelerator = workloads[0].split('_')[1]
             if workflow[0]:
@@ -450,8 +533,64 @@ class BenchmarkRun:
             if p.startswith('++workload.'):
                 self.override_parameters[p[len('++workload.'):]] = v
 
-        self.metrics = benchmark_result.summary.get("metric")
         self.system_info = ClusterInformation.from_dlio_summary_json(benchmark_result.summary, self.logger)
+
+    def _process_result_metrics(self):
+        if self.benchmark_type == BENCHMARK_TYPES.training:
+            # Extract metrics from the benchmark result
+            summary_metrics = self.benchmark_result.summary.get('metric', {})
+            training_metrics = dict(
+                train_au_mean_percentage=summary_metrics.get('train_au_mean_percentage'),
+                train_au_meet_expectation=summary_metrics.get('train_au_meet_expectation'),
+                train_throughput_samples_per_second=summary_metrics.get('train_throughput_samples_per_second'),
+                train_io_mean_MB_per_second=summary_metrics.get('train_io_mean_MB_per_second'),
+                num_accelerators=self.benchmark_result.summary.get('num_accelerators'),
+            )
+            self.metrics = training_metrics
+
+        if self.benchmark_type == BENCHMARK_TYPES.checkpointing:
+            # Here we need to pull the minimum throughput for each checkpoint across all ranks
+            # This will be nested dicts of {<checkpoint_operation>: {<checkpoint_number>: List[Dict]}}
+            checkpoint_dicts = dict(save=dict(), load=dict())
+            for rank, stats in self.benchmark_result.per_rank_per_epoch_stats.items():
+                # We have epoch set to 1 by default
+                rank_dicts = stats.get("1")
+                for key, value in rank_dicts.items():
+                    if key.startswith("save_") or key.startswith('load_'):
+                        # We have another nested dictionary for saving or loading
+                        checkpoint_operation = key.split('_')[0]
+                        checkpoint_number = int(key[len("save_ckpt"):])
+                        dict_to_append = {
+                            "rank": int(rank),
+                            "checkpoint_operation": checkpoint_operation,
+                            "checkpoint_number": checkpoint_number,
+                            "throughput": value.get("throughput"),
+                            "duration": value.get("duration"),
+                            "start": value.get("start"),
+                            "end": value.get("end"),
+                        }
+                        if checkpoint_number not in checkpoint_dicts[checkpoint_operation].keys():
+                            checkpoint_dicts[checkpoint_operation][checkpoint_number] = []
+                        checkpoint_dicts[checkpoint_operation][checkpoint_number].append(dict_to_append)
+
+            min_throughputs = dict(save=list(), load=list())
+            mean_throughputs = dict(save=list(), load=list())
+            for operation, op_dicts in checkpoint_dicts.items():
+                for checkpoint_number, data_dicts in op_dicts.items():
+                    min_throughputs[operation].append(min([stats.get("throughput") for stats in data_dicts]))
+                    # mean_throughputs[operation].append(sum(stats.get("throughput") for stats in data_dicts) / len(data_dicts))
+
+            for operation, throughput_list in min_throughputs.items():
+                self.metrics[f"num_{operation}_ops"] = len(throughput_list)
+                if not throughput_list:
+                    continue
+                self.metrics[f"{operation}_mean_of_min_throughput"] = mean(throughput_list)
+
+            # for operation, throughput_list in mean_throughputs.items():
+            #     if not throughput_list:
+            #         continue
+            #     self.metrics[f"{operation}_mean_of_mean_throughput"] = mean(throughput_list)
+
 
 
 class RulesChecker(abc.ABC):
@@ -676,7 +815,11 @@ class TrainingRunRulesChecker(RunRulesChecker):
         pass
 
     def check_inter_test_times(self) -> Optional[Issue]:
-        pass
+        # This can only operate on BenchmarkResults and not Benchmarks
+        # Check if the benchmark_run has the benchmark_result attribute
+        if not self.benchmark_run.benchmark_result:
+            return None
+        return None  # Placeholder for implementation
 
     def check_file_system_caching(self) -> Optional[Issue]:
         pass

@@ -11,6 +11,7 @@ import subprocess
 import shlex
 import select
 import signal
+import statistics
 import sys
 import threading
 import yaml
@@ -155,6 +156,26 @@ def remove_nan_values(input_dict):
 
     return ret_dict
 
+
+def aggregate_run_metrics(run_metrics: List[Dict[str, Union[float, int]]], agg_funcs=None) -> Dict[str, Union[float, int]]:
+    agg_funcs = [statistics.mean,] if agg_funcs is None else agg_funcs
+    grouped_metrics = {}
+    mean_metrics = {}
+
+    for metrics in run_metrics:
+        for metric_name, metric_value in metrics.items():
+            if metric_name not in grouped_metrics:
+                grouped_metrics[metric_name] = []
+            grouped_metrics[metric_name].append(metric_value)
+
+    for metric_name, metric_values in grouped_metrics.items():
+        for agg_func in agg_funcs:
+            try:
+                mean_metrics[f"{agg_func.__name__}_{metric_name}"] = agg_func(metric_values)
+            except Exception as e:
+                continue
+
+    return mean_metrics
 
 class CommandExecutor:
     """
