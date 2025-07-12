@@ -1,3 +1,0 @@
-[OUTPUT] 2025-06-06T21:45:59.722980 Running DLIO [Checkpointing] with 8 process(es)
-[OUTPUT] 2025-06-06T21:45:59.744319 Performing subset checkpointing: 8 of 8
-[OUTPUT] 2025-06-06T21:45:59.744435 Total number of parameters in the model: 69882617856

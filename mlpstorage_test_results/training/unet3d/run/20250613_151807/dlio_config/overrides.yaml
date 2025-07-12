@@ -1,3 +1,0 @@
-- workload=unet3d_a100
-- ++workload.dataset.num_files_train=192
-- ++workload.dataset.data_folder=/mnt/nvme/test_data/unet3d

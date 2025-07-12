@@ -1,4 +1,0 @@
-- workload=llama3_8b
-- ++workload.checkpoint.num_checkpoints_read=1
-- ++workload.checkpoint.num_checkpoints_write=1
-- ++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-8b
