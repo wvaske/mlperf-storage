@@ -905,6 +905,23 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
         Require 5 runs for training benchmarks
         """
 
+        num_runs = 0
+        for run in self.benchmark_runs:
+            if run.benchmark_type == BENCHMARK_TYPES.training:
+                num_runs += 1
+
+        if num_runs == 5:
+            return Issue(
+                        validation=PARAM_VALIDATION.CLOSED,
+                        message="Found expected 5 benchmark runs.",
+                        severity="info",
+                    )
+        return Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Expected 5 training runs but found {num_runs}",
+                    severity="error",
+                )
+
 class BenchmarkVerifier:
 
     def __init__(self, *benchmark_runs, logger=None):
