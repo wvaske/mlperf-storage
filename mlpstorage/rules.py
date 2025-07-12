@@ -860,12 +860,10 @@ class CheckpointSubmissionRulesChecker(MultiRunRulesChecker):
             cached = float(host_meminfo.get("Cached", "0").split()[0])
             mem_total_gb = mem_total / 1024 / 1024
             cached_gb = cached / 1024 / 1024
-            print(f"MemTotal: {mem_total_gb:.2f} GB")
-            print(f"Cached: {cached_gb:.2f} GB")
+        
             metric = run.benchmark_result.summary.get("metric", {})
             # Extract the checkpoint size from the summary
             checkpoint_size_gb = float(metric.get("checkpoint_size_GB", 0))
-            print(f"Checkpoint Size: {checkpoint_size_gb:.2f} GB")
 
             if mem_total_gb >= 3 * checkpoint_size_gb:
                 if cached_gb > 0.1 * checkpoint_size_gb:
@@ -1247,12 +1245,9 @@ def get_runs_files(results_dir, logger=None):
         return []
 
     runs = []
-    print(f'Looking for runs in {results_dir}')
     # Walk through all directories and files in results_dir
     for root, dirs, files in os.walk(results_dir):
-        print(f'Processing directory: {root}')
-        print("directories:", dirs)
-        print(f'Files in directory: {files}')
+       
         logger.ridiculous(f'Processing directory: {root}')
 
         # Look for metadata files
@@ -1273,11 +1268,9 @@ def get_runs_files(results_dir, logger=None):
         for f in files:
             if f == 'summary.json':
                 dlio_summary_file = os.path.join(root, f)
-                print(f'Found DLIO summary file: {dlio_summary_file}')
                 break
 
         if dlio_summary_file:
-            print(f'Processing DLIO summary file: {dlio_summary_file}')
             runs.append(BenchmarkRun(benchmark_result=BenchmarkResult(root, logger), logger=logger))
 
 
