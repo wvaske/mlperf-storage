@@ -1,0 +1,12 @@
+[OUTPUT] 2025-06-13T15:18:34.319560 Running DLIO [Checkpointing] with 8 process(es)
+[OUTPUT] 2025-06-13T15:18:34.340794 Total number of parameters in the model: 8030261248
+[OUTPUT] 2025-06-13T15:18:41.132001 Model size: 14.957527 GB 
+[OUTPUT] 2025-06-13T15:18:41.132380 Optimizer state size: 89.746994 GB 
+[OUTPUT] 2025-06-13T15:18:41.132429 Total checkpoint size: 104.704521 GB 
+[OUTPUT] 2025-06-13T15:18:41.132565 Checkpointing write started
+[OUTPUT] 2025-06-13T15:18:46.133110 Starting saving checkpoint 1 after total step 1 for epoch 1
+[OUTPUT] 2025-06-13T15:18:47.230608 Saved model checkpoint in 1.0970 seconds
+[OUTPUT] 2025-06-13T15:18:57.107336 Saved optimizer checkpoint in 9.8765 seconds
+[OUTPUT] 2025-06-13T15:18:57.107604 Finished saving checkpoint 1 for epoch 1 in 10.9745 s; Throughput: 9.5407 GB/s
+[OUTPUT] 2025-06-13T15:18:57.109270 Checkpointing write finished
+[OUTPUT] 2025-06-13T15:18:57.109381 Checkpointing read started

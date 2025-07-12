@@ -1,0 +1,156 @@
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1748889371.957641 2318750 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1748889371.957641 2318751 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1748889371.957640 2318752 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1748889371.957641 2318754 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1748889371.957644 2318755 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1748889371.957794 2318757 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1748889371.957907 2318756 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1748889371.959389 2318753 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1748889371.963097 2318751 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1748889371.963092 2318752 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1748889371.963092 2318754 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1748889371.963094 2318757 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1748889371.963097 2318755 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1748889371.963097 2318750 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1748889371.963189 2318756 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1748889371.964621 2318753 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1748889371.978806 2318754 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978823 2318754 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978826 2318754 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978828 2318754 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978813 2318757 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978835 2318757 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978838 2318757 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978840 2318757 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978813 2318753 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978828 2318753 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978831 2318753 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978833 2318753 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978809 2318755 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978826 2318755 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978828 2318755 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978830 2318755 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978802 2318756 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978823 2318756 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978825 2318756 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978827 2318756 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978815 2318750 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978831 2318750 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978834 2318750 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978836 2318750 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978805 2318751 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978823 2318751 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978826 2318751 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978827 2318751 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978812 2318752 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978828 2318752 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978831 2318752 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1748889371.978833 2318752 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+[OUTPUT] 2025-06-02T18:36:15.819514 Running DLIO [Checkpointing] with 8 process(es)
+Error executing job with overrides: ['workload=llama3_1t', '++workload.checkpoint.mode=subset', '++workload.checkpoint.num_checkpoints_read=1', '++workload.checkpoint.num_checkpoints_write=1', '++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-1t']
+Error executing job with overrides: ['workload=llama3_1t', '++workload.checkpoint.mode=subset', '++workload.checkpoint.num_checkpoints_read=1', '++workload.checkpoint.num_checkpoints_write=1', '++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-1t']
+Error executing job with overrides: ['workload=llama3_1t', '++workload.checkpoint.mode=subset', '++workload.checkpoint.num_checkpoints_read=1', '++workload.checkpoint.num_checkpoints_write=1', '++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-1t']
+Error executing job with overrides: ['workload=llama3_1t', '++workload.checkpoint.mode=subset', '++workload.checkpoint.num_checkpoints_read=1', '++workload.checkpoint.num_checkpoints_write=1', '++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-1t']
+Error executing job with overrides: ['workload=llama3_1t', '++workload.checkpoint.mode=subset', '++workload.checkpoint.num_checkpoints_read=1', '++workload.checkpoint.num_checkpoints_write=1', '++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-1t']
+Error executing job with overrides: ['workload=llama3_1t', '++workload.checkpoint.mode=subset', '++workload.checkpoint.num_checkpoints_read=1', '++workload.checkpoint.num_checkpoints_write=1', '++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-1t']
+Error executing job with overrides: ['workload=llama3_1t', '++workload.checkpoint.mode=subset', '++workload.checkpoint.num_checkpoints_read=1', '++workload.checkpoint.num_checkpoints_write=1', '++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-1t']
+Error executing job with overrides: ['workload=llama3_1t', '++workload.checkpoint.mode=subset', '++workload.checkpoint.num_checkpoints_read=1', '++workload.checkpoint.num_checkpoints_write=1', '++workload.checkpoint.checkpoint_folder=/mnt/nvme/test_data/llama3-1t']
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 460, in run_benchmark
+    benchmark.initialize()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 227, in initialize
+    self.args.validate()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/utils/config.py", line 286, in validate
+    raise Exception("To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.")
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 460, in run_benchmark
+    benchmark.initialize()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 227, in initialize
+    self.args.validate()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/utils/config.py", line 286, in validate
+    raise Exception("To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.")
+Exception: To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 460, in run_benchmark
+    benchmark.initialize()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 227, in initialize
+    self.args.validate()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/utils/config.py", line 286, in validate
+    raise Exception("To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.")
+Exception: To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 460, in run_benchmark
+    benchmark.initialize()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 227, in initialize
+    self.args.validate()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/utils/config.py", line 286, in validate
+    raise Exception("To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.")
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 460, in run_benchmark
+    benchmark.initialize()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 227, in initialize
+    self.args.validate()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/utils/config.py", line 286, in validate
+    raise Exception("To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.")
+Exception: To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.
+Exception: To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 460, in run_benchmark
+    benchmark.initialize()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 227, in initialize
+    self.args.validate()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/utils/config.py", line 286, in validate
+    raise Exception("To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.")
+Exception: To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 460, in run_benchmark
+    benchmark.initialize()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 227, in initialize
+    self.args.validate()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/utils/config.py", line 286, in validate
+    raise Exception("To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.")
+Exception: To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.
+Exception: To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 460, in run_benchmark
+    benchmark.initialize()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/main.py", line 227, in initialize
+    self.args.validate()
+  File "/usr/local/lib/python3.12/dist-packages/dlio_benchmark/utils/config.py", line 286, in validate
+    raise Exception("To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.")
+Exception: To perform subset Checkpointing, please set a target data parallelism: workload.parallelism.data.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+--------------------------------------------------------------------------
+Primary job  terminated normally, but 1 process returned
+a non-zero exit code. Per user-direction, the job has been aborted.
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+mpirun detected that one or more processes exited with non-zero status, thus causing
+the job to be terminated. The first process to do so was:
+
+  Process name: [[23435,1],7]
+  Exit code:    1
+--------------------------------------------------------------------------

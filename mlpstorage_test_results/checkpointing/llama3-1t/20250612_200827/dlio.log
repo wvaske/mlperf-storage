@@ -1,0 +1,29 @@
+[OUTPUT] 2025-06-12T20:08:33.483145 Running DLIO [Checkpointing] with 8 process(es)
+[OUTPUT] 2025-06-12T20:08:33.504122 Performing subset checkpointing: 8 of 1024
+[OUTPUT] 2025-06-12T20:08:33.504236 Total number of parameters in the model: 1183035102480
+[OUTPUT] 2025-06-12T20:08:43.298113 Model size: 40.419757 GB  (subset)
+[OUTPUT] 2025-06-12T20:08:43.298462 Optimizer state size: 103.304125 GB  (subset)
+[OUTPUT] 2025-06-12T20:08:43.298508 Total checkpoint size: 143.723882 GB  (subset)
+[OUTPUT] 2025-06-12T20:08:43.298635 Checkpointing write started
+[OUTPUT] 2025-06-12T20:08:48.299339 Starting saving checkpoint 1 after total step 1 for epoch 1
+[OUTPUT] 2025-06-12T20:08:51.804528 Saved model checkpoint in 3.5047 seconds
+[OUTPUT] 2025-06-12T20:09:01.505003 Saved optimizer checkpoint in 9.7002 seconds
+[OUTPUT] 2025-06-12T20:09:01.505178 Finished saving checkpoint 1 for epoch 1 in 13.2058 s; Throughput: 10.8834 GB/s
+[OUTPUT] 2025-06-12T20:09:01.506807 Checkpointing write finished
+[OUTPUT] 2025-06-12T20:09:01.506915 Checkpointing read started
+[OUTPUT] 2025-06-12T20:09:06.721905 Starting loading checkpoint 1 after total step 1 for epoch 1
+[OUTPUT] 2025-06-12T20:09:11.294594 Loaded model checkpoint in 4.5724 seconds
+[OUTPUT] 2025-06-12T20:09:22.061343 Loaded optimizer checkpoint in 10.7664 seconds
+[OUTPUT] 2025-06-12T20:09:22.064336 Finished loading checkpoint 1 for epoch 1 in 15.3424 s; Throughput: 9.3677 GB/s
+[OUTPUT] 2025-06-12T20:09:22.065390 Checkpointing write started
+[OUTPUT] 2025-06-12T20:09:22.113618 Saved outputs in /root/mlpstorage_test_results/checkpointing/llama3-1t/20250612_200827
+[OUTPUT] Averaged metric over all steps/epochs
+[METRIC] ==========================================================
+[METRIC] Number of Simulated Accelerators: 8 
+[METRIC] Checkpoint save duration (seconds): 13.2058 (0.0000)
+[METRIC] Checkpoint save I/O Throughput (GB/second): 10.8834 (0.0000)
+[METRIC] Checkpoint load duration (seconds): 15.3424 (0.0000)
+[METRIC] Checkpoint load I/O Throughput (GB/second): 9.3677 (0.0000)
+[METRIC] ==========================================================
+
+[OUTPUT] 2025-06-12T20:09:22.137560 outputs saved in RANKID_output.json

@@ -1,0 +1,8 @@
+# Ignore test result folder
+mlpstorage_test_results/
+
+# Ignore compressed result archive
+results_dir.tar.gz
+
+# Ignore all log files in this repo
+*.log

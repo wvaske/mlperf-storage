@@ -1,0 +1,98 @@
+{
+  "args": {
+    "program": "training",
+    "command": "datagen",
+    "results_dir": "/root/mlpstorage_test_results",
+    "loops": 1,
+    "config_file": null,
+    "closed": false,
+    "debug": false,
+    "verbose": false,
+    "stream_log_level": "INFO",
+    "allow_invalid_params": false,
+    "what_if": false,
+    "hosts": [
+      "127.0.0.1",
+      "127.0.0.1"
+    ],
+    "model": "cosmoflow",
+    "exec_type": "mpi",
+    "mpi_bin": "mpirun",
+    "oversubscribe": false,
+    "allow_run_as_root": true,
+    "num_processes": 96,
+    "data_dir": "/mnt/nvme/test_data",
+    "params": [
+      "dataset.num_files_train=192"
+    ],
+    "dlio_bin_path": null,
+    "num_client_hosts": 2
+  },
+  "debug": null,
+  "run_datetime": "20250602_182428",
+  "run_number": 0,
+  "runtime": 10.293041467666626,
+  "verification": null,
+  "command_output_files": [
+    {
+      "command": "mpirun -n 96 -host 127.0.0.1:48,127.0.0.1:48 --allow-run-as-root /usr/local/bin/dlio_benchmark workload=cosmoflow_datagen ++hydra.run.dir=/root/mlpstorage_test_results/training/cosmoflow/datagen/20250602_182428 ++hydra.output_subdir=dlio_config ++workload.dataset.num_files_train=192 ++workload.dataset.data_folder=/mnt/nvme/test_data/cosmoflow --config-dir=/opt/mlcommons/storage/configs/dlio",
+      "stdout": "/root/mlpstorage_test_results/training/cosmoflow/datagen/20250602_182428/training_datagen.stdout.log",
+      "stderr": "/root/mlpstorage_test_results/training/cosmoflow/datagen/20250602_182428/training_datagen.stderr.log"
+    }
+  ],
+  "run_result_output": "/root/mlpstorage_test_results/training/cosmoflow/datagen/20250602_182428",
+  "metadata_filename": "training_20250602_182428_metadata.json",
+  "metadata_file_path": "/root/mlpstorage_test_results/training/cosmoflow/datagen/20250602_182428/training_20250602_182428_metadata.json",
+  "_config_name": "cosmoflow_datagen",
+  "base_command": "dlio_benchmark",
+  "base_path": "/usr/local/bin",
+  "base_command_path": "/usr/local/bin/dlio_benchmark",
+  "config_path": "/opt/mlcommons/storage/configs/dlio",
+  "per_host_mem_kB": null,
+  "total_mem_kB": null,
+  "config_file": "cosmoflow_datagen.yaml",
+  "params_dict": {
+    "dataset.num_files_train": "192",
+    "dataset.data_folder": "/mnt/nvme/test_data/cosmoflow"
+  },
+  "yaml_params": {
+    "model": {
+      "name": "cosmoflow"
+    },
+    "framework": "tensorflow",
+    "workflow": {
+      "generate_data": true,
+      "train": false,
+      "checkpoint": false
+    },
+    "dataset": {
+      "data_folder": "data/cosmoflow",
+      "num_files_train": 524288,
+      "num_samples_per_file": 1,
+      "record_length_bytes": 2828486,
+      "record_length_bytes_stdev": 71311,
+      "format": "tfrecord"
+    }
+  },
+  "combined_params": {
+    "model": {
+      "name": "cosmoflow"
+    },
+    "framework": "tensorflow",
+    "workflow": {
+      "generate_data": true,
+      "train": false,
+      "checkpoint": false
+    },
+    "dataset": {
+      "data_folder": "data/cosmoflow",
+      "num_files_train": "192",
+      "num_samples_per_file": 1,
+      "record_length_bytes": 2828486,
+      "record_length_bytes_stdev": 71311,
+      "format": "tfrecord"
+    }
+  },
+  "executed_command": "mpirun -n 96 -host 127.0.0.1:48,127.0.0.1:48 --allow-run-as-root /usr/local/bin/dlio_benchmark workload=cosmoflow_datagen ++hydra.run.dir=/root/mlpstorage_test_results/training/cosmoflow/datagen/20250602_182428 ++hydra.output_subdir=dlio_config ++workload.dataset.num_files_train=192 ++workload.dataset.data_folder=/mnt/nvme/test_data/cosmoflow --config-dir=/opt/mlcommons/storage/configs/dlio",
+  "benchmark_type": "training"
+}

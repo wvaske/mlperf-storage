@@ -101,6 +101,7 @@ def main():
             return new_args
 
     if args.program == "reports":
+
         results_dir = args.results_dir if hasattr(args, 'results_dir') else DEFAULT_RESULTS_DIR
         report_generator = ReportGenerator(results_dir, args, logger=logger)
         return report_generator.generate_reports()

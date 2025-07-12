@@ -1,0 +1,28 @@
+[OUTPUT] 2025-06-04T23:34:15.169295 Running DLIO [Checkpointing] with 8 process(es)
+[OUTPUT] 2025-06-04T23:34:15.190578 Total number of parameters in the model: 8030261248
+[OUTPUT] 2025-06-04T23:34:21.880240 Model size: 14.957527 GB 
+[OUTPUT] 2025-06-04T23:34:21.880606 Optimizer state size: 89.746994 GB 
+[OUTPUT] 2025-06-04T23:34:21.880656 Total checkpoint size: 104.704521 GB 
+[OUTPUT] 2025-06-04T23:34:21.880798 Checkpointing write started
+[OUTPUT] 2025-06-04T23:34:26.881182 Starting saving checkpoint 1 after total step 1 for epoch 1
+[OUTPUT] 2025-06-04T23:34:28.013106 Saved model checkpoint in 1.1315 seconds
+[OUTPUT] 2025-06-04T23:34:35.574263 Saved optimizer checkpoint in 7.5610 seconds
+[OUTPUT] 2025-06-04T23:34:35.574543 Finished saving checkpoint 1 for epoch 1 in 8.6934 s; Throughput: 12.0442 GB/s
+[OUTPUT] 2025-06-04T23:34:35.576173 Checkpointing write finished
+[OUTPUT] 2025-06-04T23:34:35.576279 Checkpointing read started
+[OUTPUT] 2025-06-04T23:34:40.619491 Starting loading checkpoint 1 after total step 1 for epoch 1
+[OUTPUT] 2025-06-04T23:34:42.132197 Loaded model checkpoint in 1.5123 seconds
+[OUTPUT] 2025-06-04T23:34:51.514926 Loaded optimizer checkpoint in 9.3825 seconds
+[OUTPUT] 2025-06-04T23:34:51.515375 Finished loading checkpoint 1 for epoch 1 in 10.8959 s; Throughput: 9.6095 GB/s
+[OUTPUT] 2025-06-04T23:34:51.516382 Checkpointing write started
+[OUTPUT] 2025-06-04T23:34:51.517507 Saved outputs in /root/mlpstorage_test_results/checkpointing/llama3-8b/20250604_233407
+[OUTPUT] Averaged metric over all steps/epochs
+[METRIC] ==========================================================
+[METRIC] Number of Simulated Accelerators: 8 
+[METRIC] Checkpoint save duration (seconds): 8.6934 (0.0000)
+[METRIC] Checkpoint save I/O Throughput (GB/second): 12.0442 (0.0000)
+[METRIC] Checkpoint load duration (seconds): 10.8959 (0.0000)
+[METRIC] Checkpoint load I/O Throughput (GB/second): 9.6095 (0.0000)
+[METRIC] ==========================================================
+
+[OUTPUT] 2025-06-04T23:34:51.518617 outputs saved in RANKID_output.json

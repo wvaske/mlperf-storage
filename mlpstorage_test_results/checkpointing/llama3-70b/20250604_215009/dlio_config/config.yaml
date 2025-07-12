@@ -1,0 +1,30 @@
+workload:
+  model:
+    name: llama_70b
+    type: transformer
+    num_layers: 80
+    model_datatype: fp16
+    optimizer_datatype: fp32
+    parallelism:
+      tensor: 8
+      pipeline: 1
+      zero_stage: 3
+      data: 8
+    transformer:
+      vocab_size: 128256
+      hidden_size: 8192
+      ffn_hidden_size: 28672
+      num_attention_heads: 128
+      num_kv_heads: 8
+  framework: pytorch
+  workflow:
+    generate_data: false
+    train: false
+    checkpoint: true
+  checkpoint:
+    checkpoint_folder: /mnt/nvme/test_data/llama3-70b
+    time_between_checkpoints: 5
+    num_checkpoints_write: 1
+    num_checkpoints_read: 1
+    fsync: true
+    mode: subset

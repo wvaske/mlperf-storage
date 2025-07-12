@@ -1,0 +1,28 @@
+workload:
+  model:
+    name: llama_8b
+    type: transformer
+    num_layers: 32
+    model_datatype: fp16
+    optimizer_datatype: fp32
+    parallelism:
+      pipeline: 1
+      tensor: 1
+      zero_stage: 3
+    transformer:
+      vocab_size: 128256
+      hidden_size: 4096
+      ffn_hidden_size: 14336
+      num_attention_heads: 32
+      num_kv_heads: 8
+  framework: pytorch
+  workflow:
+    generate_data: false
+    train: false
+    checkpoint: true
+  checkpoint:
+    checkpoint_folder: /mnt/nvme/test_data/llama3-8b
+    time_between_checkpoints: 5
+    num_checkpoints_write: 1
+    num_checkpoints_read: 1
+    fsync: true

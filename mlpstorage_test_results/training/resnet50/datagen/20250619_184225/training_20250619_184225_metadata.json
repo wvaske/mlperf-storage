@@ -1,0 +1,100 @@
+{
+  "args": {
+    "program": "training",
+    "command": "datagen",
+    "results_dir": "/root/mlpstorage_test_results",
+    "loops": 1,
+    "config_file": null,
+    "closed": false,
+    "debug": false,
+    "verbose": false,
+    "stream_log_level": "INFO",
+    "allow_invalid_params": false,
+    "what_if": false,
+    "hosts": [
+      "127.0.0.1",
+      "127.0.0.1"
+    ],
+    "model": "resnet50",
+    "exec_type": "mpi",
+    "mpi_bin": "mpirun",
+    "oversubscribe": false,
+    "allow_run_as_root": true,
+    "num_processes": 96,
+    "data_dir": "/mnt/nvme/test_data",
+    "params": [
+      "dataset.num_files_train=192"
+    ],
+    "dlio_bin_path": null,
+    "num_client_hosts": 2
+  },
+  "debug": null,
+  "run_datetime": "20250619_184225",
+  "run_number": 0,
+  "runtime": 13.278523445129395,
+  "verification": null,
+  "command_output_files": [
+    {
+      "command": "mpirun -n 96 -host 127.0.0.1:48,127.0.0.1:48 --allow-run-as-root /usr/local/bin/dlio_benchmark workload=resnet50_datagen ++hydra.run.dir=/root/mlpstorage_test_results/training/resnet50/datagen/20250619_184225 ++hydra.output_subdir=dlio_config ++workload.dataset.num_files_train=192 ++workload.dataset.data_folder=/mnt/nvme/test_data/resnet50 --config-dir=/opt/mlcommons/storage/configs/dlio",
+      "stdout": "/root/mlpstorage_test_results/training/resnet50/datagen/20250619_184225/training_datagen.stdout.log",
+      "stderr": "/root/mlpstorage_test_results/training/resnet50/datagen/20250619_184225/training_datagen.stderr.log"
+    }
+  ],
+  "run_result_output": "/root/mlpstorage_test_results/training/resnet50/datagen/20250619_184225",
+  "metadata_filename": "training_20250619_184225_metadata.json",
+  "metadata_file_path": "/root/mlpstorage_test_results/training/resnet50/datagen/20250619_184225/training_20250619_184225_metadata.json",
+  "_config_name": "resnet50_datagen",
+  "base_command": "dlio_benchmark",
+  "base_path": "/usr/local/bin",
+  "base_command_path": "/usr/local/bin/dlio_benchmark",
+  "config_path": "/opt/mlcommons/storage/configs/dlio",
+  "per_host_mem_kB": null,
+  "total_mem_kB": null,
+  "config_file": "resnet50_datagen.yaml",
+  "params_dict": {
+    "dataset.num_files_train": "192",
+    "dataset.data_folder": "/mnt/nvme/test_data/resnet50"
+  },
+  "yaml_params": {
+    "model": {
+      "name": "resnet50",
+      "type": "cnn"
+    },
+    "framework": "tensorflow",
+    "workflow": {
+      "generate_data": true,
+      "train": false,
+      "checkpoint": false
+    },
+    "dataset": {
+      "num_files_train": 1024,
+      "num_samples_per_file": 1251,
+      "record_length_bytes": 114660.07,
+      "record_length_bytes_resize": 150528,
+      "data_folder": "data/resnet50",
+      "format": "tfrecord"
+    }
+  },
+  "combined_params": {
+    "model": {
+      "name": "resnet50",
+      "type": "cnn"
+    },
+    "framework": "tensorflow",
+    "workflow": {
+      "generate_data": true,
+      "train": false,
+      "checkpoint": false
+    },
+    "dataset": {
+      "num_files_train": "192",
+      "num_samples_per_file": 1251,
+      "record_length_bytes": 114660.07,
+      "record_length_bytes_resize": 150528,
+      "data_folder": "data/resnet50",
+      "format": "tfrecord"
+    }
+  },
+  "executed_command": "mpirun -n 96 -host 127.0.0.1:48,127.0.0.1:48 --allow-run-as-root /usr/local/bin/dlio_benchmark workload=resnet50_datagen ++hydra.run.dir=/root/mlpstorage_test_results/training/resnet50/datagen/20250619_184225 ++hydra.output_subdir=dlio_config ++workload.dataset.num_files_train=192 ++workload.dataset.data_folder=/mnt/nvme/test_data/resnet50 --config-dir=/opt/mlcommons/storage/configs/dlio",
+  "benchmark_type": "training"
+}

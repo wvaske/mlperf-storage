@@ -573,6 +573,8 @@ class BenchmarkRun:
                             checkpoint_dicts[checkpoint_operation][checkpoint_number] = []
                         checkpoint_dicts[checkpoint_operation][checkpoint_number].append(dict_to_append)
 
+                        print("Checkpoint operation found:", checkpoint_operation, "Checkpoint number:", checkpoint_number)
+
             min_throughputs = dict(save=list(), load=list())
             mean_throughputs = dict(save=list(), load=list())
             for operation, op_dicts in checkpoint_dicts.items():
@@ -649,6 +651,7 @@ class MultiRunRulesChecker(RulesChecker):
 
     def check_runs_valid(self) -> Optional[Issue]:
         category_set = {run.category for run in self.benchmark_runs}
+        
         if PARAM_VALIDATION.INVALID in category_set:
             return Issue(
                 validation=PARAM_VALIDATION.INVALID,
@@ -678,9 +681,10 @@ class MultiRunRulesChecker(RulesChecker):
 
 class TrainingRunRulesChecker(RunRulesChecker):
     """Rules checker for training benchmarks"""
-    
+
     def check_benchmark_type(self) -> Optional[Issue]:
         if self.benchmark_run.benchmark_type != BENCHMARK_TYPES.training:
+
             return Issue(
                 validation=PARAM_VALIDATION.INVALID,
                 message=f"Invalid benchmark type: {self.benchmark_run.benchmark_type}",
@@ -688,11 +692,14 @@ class TrainingRunRulesChecker(RunRulesChecker):
                 expected=BENCHMARK_TYPES.training,
                 actual=self.benchmark_run.benchmark_type
             )
+
         return None
     
     def check_num_files_train(self) -> Optional[Issue]:
         """Check if the number of training files meets the minimum requirement"""
+       
         if 'dataset' not in self.benchmark_run.parameters:
+
             return Issue(
                 validation=PARAM_VALIDATION.INVALID,
                 message="Missing dataset parameters",
@@ -770,6 +777,7 @@ class TrainingRunRulesChecker(RunRulesChecker):
         return issues
 
     def check_workflow_parameters(self) -> Optional[Issue]:
+        
         issues = []
         # Check if the workflow parameters are valid
         workflow_params = self.benchmark_run.parameters.get('workflow', {})
@@ -836,20 +844,78 @@ class CheckpointingRunRulesChecker(RunRulesChecker):
 #######################################################################################################################
 
 class CheckpointSubmissionRulesChecker(MultiRunRulesChecker):
+   
     supported_models = LLM_MODELS
 
+    def check_file_system_caching(self) -> Optional[Issue]:
+        
+        for run in self.benchmark_runs:
+           
+            if run.benchmark_type != BENCHMARK_TYPES.checkpointing:
+                continue
+            
+
+            host_meminfo = run.benchmark_result.summary.get("host_meminfo", {})
+            mem_total = float(host_meminfo.get("MemTotal", "0").split()[0])
+            cached = float(host_meminfo.get("Cached", "0").split()[0])
+            mem_total_gb = mem_total / 1024 / 1024
+            cached_gb = cached / 1024 / 1024
+            print(f"MemTotal: {mem_total_gb:.2f} GB")
+            print(f"Cached: {cached_gb:.2f} GB")
+            metric = run.benchmark_result.summary.get("metric", {})
+            # Extract the checkpoint size from the summary
+            checkpoint_size_gb = float(metric.get("checkpoint_size_GB", 0))
+            print(f"Checkpoint Size: {checkpoint_size_gb:.2f} GB")
+
+            if mem_total_gb >= 3 * checkpoint_size_gb:
+                if cached_gb > 0.1 * checkpoint_size_gb:
+                    return Issue(
+                        validation=PARAM_VALIDATION.INVALID,
+                        message="Potential caching detected: Cached memory is high relative to checkpoint size.",
+                        parameter="Cached",
+                        expected=f"< {0.1 * checkpoint_size_gb:.2f} GB",
+                        actual=f"{cached_gb:.2f} GB",
+                    )
+                else:
+                    return Issue(
+                        validation=PARAM_VALIDATION.CLOSED,
+                        message="No significant caching detected.",
+                        parameter="Cached",
+                        expected=f"< {0.1 * checkpoint_size_gb:.2f} GB",
+                        actual=f"{cached_gb:.2f} GB",
+                    )
+
+
+        return None
+
+
+
+
+
+          
+
+     
+
+
+            
+
+
     def check_num_runs(self) -> Optional[Issue]:
+
         """
         Require 10 total writes and 10 total reads for checkpointing benchmarks.  It's possible for a submitter
-         to have a single run with all checkpoints, two runs that separate reads and writes, or individual runs
-         for each read and write operation.
+        to have a single run with all checkpoints, two runs that separate reads and writes, or individual runs
+        for each read and write operation.
         """
+
         issues = []
         num_writes = num_reads = 0
         for run in self.benchmark_runs:
+
+           
             if run.benchmark_type == BENCHMARK_TYPES.checkpointing:
                 num_writes += run.parameters.get('checkpoint', {}).get('num_checkpoints_write', 0)
-                num_reads += run.parameters.get('checkpoint', {}).get('num_checkpoints_read', 0)
+                num_reads += run.parameters.get('checkpoint', {}).get('num_checkpoints_read', 0)      
 
         if not num_reads == 10:
             issues.append(Issue(
@@ -903,7 +969,19 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
     def check_num_runs(self) -> Optional[Issue]:
         """
         Require 5 runs for training benchmarks
-        """
+        """ 
+        pass
+        
+        
+
+
+
+
+        
+
+        
+
+
 
 class BenchmarkVerifier:
 
@@ -1150,6 +1228,9 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs):
 
 
 def get_runs_files(results_dir, logger=None):
+
+
+
     """
     Walk the results_dir location and return a list of BenchmarkResult objects that represent a single run
 
@@ -1166,9 +1247,12 @@ def get_runs_files(results_dir, logger=None):
         return []
 
     runs = []
-
+    print(f'Looking for runs in {results_dir}')
     # Walk through all directories and files in results_dir
     for root, dirs, files in os.walk(results_dir):
+        print(f'Processing directory: {root}')
+        print("directories:", dirs)
+        print(f'Files in directory: {files}')
         logger.ridiculous(f'Processing directory: {root}')
 
         # Look for metadata files
@@ -1189,9 +1273,12 @@ def get_runs_files(results_dir, logger=None):
         for f in files:
             if f == 'summary.json':
                 dlio_summary_file = os.path.join(root, f)
+                print(f'Found DLIO summary file: {dlio_summary_file}')
                 break
 
         if dlio_summary_file:
+            print(f'Processing DLIO summary file: {dlio_summary_file}')
             runs.append(BenchmarkRun(benchmark_result=BenchmarkResult(root, logger), logger=logger))
+
 
     return runs

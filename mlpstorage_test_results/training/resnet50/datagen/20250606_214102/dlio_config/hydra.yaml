@@ -1,0 +1,120 @@
+hydra:
+  run:
+    dir: /root/mlpstorage_test_results/training/resnet50/datagen/20250606_214102
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  launcher:
+    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+  sweeper:
+    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+    max_batch_size: null
+    params: null
+  help:
+    app_name: dlio_benchmark
+    header: =========================== ${hydra.help.app_name} ===========================
+    footer: "Please submit questions/bugs to \n  https://github.com/argonne-lcf/dlio_benchmark/issues\n\
+      \n          Copyright (c) 2021 UChicago Argonne, LLC"
+    template: "\n${hydra.help.header}\n\nDLIO - an IO benchmark for deep learning\
+      \ applications. \n\nRunning the benchmark: dlio_benchmark workload=unet3d\n\n\
+      One can select the workload configuration using \"workload={WORKLOAD}\". \n\
+      The corresponding YAML file is ./configs/workload/{WORKLOAD}.yaml folder. \n\
+      Available choise for $APP_CONFIG_GROUPS\nOne can override everything in the\
+      \ command line, for example:\ndlio_benchmark workload.framework=tensorflow\n\
+      \nOne can also create a custom YAML file for a specific workload. \nAn example\
+      \ of a YAML file is as follows. \n\n-------\n$CONFIG\n-------\nA complete list\
+      \ of config options in the YAML file can be found: \nhttps://argonne-lcf.github.io/dlio_benchmark/config.html\n\
+      \nBy default all the output files will be saved in hydra.run.dir. \nThis can\
+      \ be changed in ./configs/config.yaml.\n\n${hydra.help.footer}\n--"
+  hydra_help:
+    template: 'Hydra (${hydra.runtime.version})
+
+      See https://hydra.cc for more info.
+
+
+      == Flags ==
+
+      $FLAGS_HELP
+
+
+      == Configuration groups ==
+
+      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+      to command line)
+
+
+      $HYDRA_CONFIG_GROUPS
+
+
+      Use ''--cfg hydra'' to Show the Hydra config.
+
+      '
+    hydra_help: ???
+  hydra_logging:
+    version: 1
+    root:
+      level: ERROR
+    disable_existing_loggers: true
+  job_logging:
+    version: 1
+    root:
+      level: ERROR
+    disable_existing_loggers: true
+  env: {}
+  mode: RUN
+  searchpath: []
+  callbacks: {}
+  output_subdir: dlio_config
+  overrides:
+    hydra:
+    - ++hydra.run.dir=/root/mlpstorage_test_results/training/resnet50/datagen/20250606_214102
+    - ++hydra.output_subdir=dlio_config
+    - hydra.mode=RUN
+    task:
+    - workload=resnet50_datagen
+    - ++workload.dataset.num_files_train=192
+    - ++workload.dataset.data_folder=/mnt/nvme/test_data/resnet50
+  job:
+    name: main
+    chdir: null
+    override_dirname: ++workload.dataset.data_folder=/mnt/nvme/test_data/resnet50,++workload.dataset.num_files_train=192,workload=resnet50_datagen
+    id: ???
+    num: ???
+    config_name: config
+    env_set: {}
+    env_copy: []
+    config:
+      override_dirname:
+        kv_sep: '='
+        item_sep: ','
+        exclude_keys: []
+  runtime:
+    version: 1.3.2
+    version_base: '1.3'
+    cwd: /root
+    config_sources:
+    - path: hydra.conf
+      schema: pkg
+      provider: hydra
+    - path: dlio_benchmark.configs
+      schema: pkg
+      provider: main
+    - path: /opt/mlcommons/storage/configs/dlio
+      schema: file
+      provider: command-line
+    - path: ''
+      schema: structured
+      provider: schema
+    output_dir: /root/mlpstorage_test_results/training/resnet50/datagen/20250606_214102
+    choices:
+      workload: resnet50_datagen
+      hydra/env: default
+      hydra/callbacks: null
+      hydra/job_logging: disabled
+      hydra/hydra_logging: disabled
+      hydra/hydra_help: default
+      hydra/help: dlio_benchmark_help.yaml
+      hydra/sweeper: basic
+      hydra/launcher: basic
+      hydra/output: default
+  verbose: false

@@ -1,0 +1,85 @@
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1749758909.541785 2954057 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1749758909.541785 2954058 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1749758909.541785 2954055 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1749758909.542033 2954054 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1749758909.542067 2954059 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1749758909.542146 2954056 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1749758909.542288 2954060 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1749758909.542360 2954053 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1749758909.546944 2954057 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1749758909.546964 2954055 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1749758909.547016 2954058 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1749758909.547059 2954054 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1749758909.547145 2954059 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1749758909.547206 2954056 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1749758909.547337 2954060 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+E0000 00:00:1749758909.547500 2954053 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1749758909.562859 2954058 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562876 2954058 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562879 2954058 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562883 2954058 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562859 2954059 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562877 2954059 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562882 2954059 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562884 2954059 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562858 2954053 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562877 2954053 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562880 2954053 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562883 2954053 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562859 2954056 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562878 2954056 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562883 2954056 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562885 2954056 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562856 2954057 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562876 2954057 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562878 2954057 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562882 2954057 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562857 2954055 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562876 2954055 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562879 2954055 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562882 2954055 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562860 2954054 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562882 2954054 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562885 2954054 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562887 2954054 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562856 2954060 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562878 2954060 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562881 2954060 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1749758909.562883 2954060 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+[OUTPUT] 2025-06-12T20:08:33.483145 Running DLIO [Checkpointing] with 8 process(es)
+[OUTPUT] 2025-06-12T20:08:33.504122 Performing subset checkpointing: 8 of 1024
+[OUTPUT] 2025-06-12T20:08:33.504236 Total number of parameters in the model: 1183035102480
+[OUTPUT] 2025-06-12T20:08:43.298113 Model size: 40.419757 GB  (subset)
+[OUTPUT] 2025-06-12T20:08:43.298462 Optimizer state size: 103.304125 GB  (subset)
+[OUTPUT] 2025-06-12T20:08:43.298508 Total checkpoint size: 143.723882 GB  (subset)
+[OUTPUT] 2025-06-12T20:08:43.298635 Checkpointing write started
+[OUTPUT] 2025-06-12T20:08:48.299339 Starting saving checkpoint 1 after total step 1 for epoch 1
+[OUTPUT] 2025-06-12T20:08:51.804528 Saved model checkpoint in 3.5047 seconds
+[OUTPUT] 2025-06-12T20:09:01.505003 Saved optimizer checkpoint in 9.7002 seconds
+[OUTPUT] 2025-06-12T20:09:01.505178 Finished saving checkpoint 1 for epoch 1 in 13.2058 s; Throughput: 10.8834 GB/s
+[OUTPUT] 2025-06-12T20:09:01.506807 Checkpointing write finished
+[OUTPUT] 2025-06-12T20:09:01.506915 Checkpointing read started
+[OUTPUT] 2025-06-12T20:09:06.721905 Starting loading checkpoint 1 after total step 1 for epoch 1
+[OUTPUT] 2025-06-12T20:09:11.294594 Loaded model checkpoint in 4.5724 seconds
+[OUTPUT] 2025-06-12T20:09:22.061343 Loaded optimizer checkpoint in 10.7664 seconds
+[OUTPUT] 2025-06-12T20:09:22.064336 Finished loading checkpoint 1 for epoch 1 in 15.3424 s; Throughput: 9.3677 GB/s
+[OUTPUT] 2025-06-12T20:09:22.065390 Checkpointing write started
+[OUTPUT] 2025-06-12T20:09:22.113618 Saved outputs in /root/mlpstorage_test_results/checkpointing/llama3-1t/20250612_200827
+[OUTPUT] Averaged metric over all steps/epochs
+[METRIC] ==========================================================
+[METRIC] Number of Simulated Accelerators: 8 
+[METRIC] Checkpoint save duration (seconds): 13.2058 (0.0000)
+[METRIC] Checkpoint save I/O Throughput (GB/second): 10.8834 (0.0000)
+[METRIC] Checkpoint load duration (seconds): 15.3424 (0.0000)
+[METRIC] Checkpoint load I/O Throughput (GB/second): 9.3677 (0.0000)
+[METRIC] ==========================================================
+
+[OUTPUT] 2025-06-12T20:09:22.137560 outputs saved in RANKID_output.json
