@@ -16,6 +16,8 @@ from mlpstorage.utils import flatten_nested_dict, remove_nan_values, aggregate_r
 @dataclass
 class Result:
     multi: bool
+    submitter: str
+    system_name: str
     benchmark_type: BENCHMARK_TYPES
     benchmark_command: str
     benchmark_model: [LLM_MODELS, MODELS]
@@ -80,6 +82,8 @@ class ReportGenerator:
             issues = verifier.issues
             result_dict = dict(
                 multi=False,
+                submitter=benchmark_run.submitter,
+                system_name=benchmark_run.system_name,
                 benchmark_run=benchmark_run,
                 benchmark_type=benchmark_run.benchmark_type,
                 benchmark_command=benchmark_run.command,
@@ -98,13 +102,13 @@ class ReportGenerator:
 
         # "workload_runs" will contain a list of BenchmarkRun objects grouped by model and accelerator
         for benchmark_run in benchmark_runs:
-            workload_key = (benchmark_run.model, benchmark_run.accelerator)
+            workload_key = (benchmark_run.submitter, benchmark_run.system_name, benchmark_run.model, benchmark_run.accelerator)
             if workload_key not in workload_runs.keys():
                 workload_runs[workload_key] = []
             workload_runs[workload_key].append(benchmark_run)
 
         for workload_key, runs in workload_runs.items():
-            model, accelerator = workload_key
+            submitter, system_name, model, accelerator = workload_key
             if not runs:
                 continue
             self.logger.info(f'Running additional verifiers for model: {model}, accelerator: {accelerator}')
@@ -113,6 +117,8 @@ class ReportGenerator:
             issues = verifier.issues
             result_dict = dict(
                 multi=True,
+                submitter=runs[0].submitter,
+                system_name=system_name,
                 benchmark_run=runs,
                 benchmark_type=runs[0].benchmark_type,
                 benchmark_command=runs[0].command,
@@ -125,7 +131,6 @@ class ReportGenerator:
             elif len(runs) == 1:
                 result_dict["metrics"] = runs[0].metrics
 
-
             self.workload_results[workload_key] = Result(**result_dict)
 
     def print_results(self):
@@ -136,9 +141,16 @@ class ReportGenerator:
             for result in self.run_results.values():
                 if result.category == category:
                     print(f'\tRunID: {result.benchmark_run.run_id}')
+                    print(f'\t    Submitter: {result.benchmark_run.submitter}')
+                    print(f'\t    System Name: {result.benchmark_run.system_name}')
                     print(f'\t    Benchmark Type: {result.benchmark_type.value}')
                     print(f'\t    Command: {result.benchmark_command}')
                     print(f'\t    Model: {result.benchmark_model}')
+
+                    if self.args.metadata_only:
+                        print("\n")
+                        continue
+
                     if result.issues:
                         print(f'\t    Issues:')
                         for issue in result.issues:
@@ -166,52 +178,67 @@ class ReportGenerator:
 
         print("\n========================= Submissions Report =========================")
         print("This report represents aggregated runs of benchmarks for submissions")
+        submitters = []
+        for workload_key in self.workload_results.keys():
+            submitter, system_name, model, accelerator = workload_key
+            if submitter not in submitters:
+                submitters.append(submitter)
+
         for category in [PARAM_VALIDATION.CLOSED, PARAM_VALIDATION.OPEN, PARAM_VALIDATION.INVALID]:
             print(f"\n------------------------- {category.value.upper()} Report -------------------------")
-            for workload_key, workload_result in self.workload_results.items():
-                if workload_result.category == category:
-                    if workload_result.benchmark_model in LLM_MODELS:
-                        workload_id = f"Checkpointing - {workload_result.benchmark_model}"
-                    elif workload_result.benchmark_model in MODELS:
-                        accelerator = workload_result.benchmark_run[0].accelerator
-                        workload_id = (f"Training - {workload_result.benchmark_model}, "
-                                       f"Accelerator: {accelerator}")
-                    else:
-                        print(f'Unknown workload type: {workload_result.benchmark_model}')
+            for submitter in submitters:
+                for workload_key, workload_result in self.workload_results.items():
+                    if workload_result.category == category and workload_key[0] == submitter:
+                        submitter, system_name, model, accelerator = workload_key
+                        if workload_result.benchmark_model in LLM_MODELS:
+                            workload_id = f"Checkpointing - {workload_result.benchmark_model}"
+                        elif workload_result.benchmark_model in MODELS:
+                            accelerator = workload_result.benchmark_run[0].accelerator
+                            workload_id = (f"Training - {workload_result.benchmark_model}, "
+                                           f"Accelerator: {accelerator}")
+                        else:
+                            print(f'Unknown workload type: {workload_result.benchmark_model}')
 
-                    print(f'\tWorkloadID: {workload_id}')
-                    print(f'\t    Benchmark Type: {workload_result.benchmark_type.value}')
-                    if workload_result.benchmark_command:
-                        print(f'\t    Command: {workload_result.benchmark_command}')
+                        print(f'\tWorkloadID: {workload_id}')
+                        print(f'\t    Submitter: {submitter}')
+                        print(f'\t    System Name: {system_name}')
+                        print(f'\t    Benchmark Type: {workload_result.benchmark_type.value}')
+                        if workload_result.benchmark_command:
+                            print(f'\t    Command: {workload_result.benchmark_command}')
 
-                    print(f'\t    Runs: ')
-                    for run in workload_result.benchmark_run:
-                        print(f'\t\t- {run.run_id} - [{self.run_results[run.run_id].category.value.upper()}]')
+                        if self.args.metadata_only:
+                            print(f'\t    Run0 ID: {workload_result.benchmark_run[0].run_id}')
+                            print("\n")
+                            continue
 
-                    if workload_result.issues:
-                        print(f'\t    Issues:')
-                        for issue in workload_result.issues:
-                            print(f'\t\t- {issue}')
-                    else:
-                        print(f'\t\t- No issues found')
+                        print(f'\t    Runs: ')
+                        for run in workload_result.benchmark_run:
+                            print(f'\t\t- {run.run_id} - [{self.run_results[run.run_id].category.value.upper()}]')
 
-                    if workload_result.metrics:
-                        print(f'\t    Metrics:')
-                        for metric, value in sorted(workload_result.metrics.items()):
-                            if type(value) in (int, float):
-                                if "percentage" in metric.lower():
-                                    print(f'\t\t- {metric}: {value:,.1f}%')
+                        if workload_result.issues:
+                            print(f'\t    Issues:')
+                            for issue in workload_result.issues:
+                                print(f'\t\t- {issue}')
+                        else:
+                            print(f'\t\t- No issues found')
+
+                        if workload_result.metrics:
+                            print(f'\t    Metrics:')
+                            for metric, value in sorted(workload_result.metrics.items()):
+                                if type(value) in (int, float):
+                                    if "percentage" in metric.lower():
+                                        print(f'\t\t- {metric}: {value:,.1f}%')
+                                    else:
+                                        print(f'\t\t- {metric}: {value:,.1f}')
+                                elif type(value) in (list, tuple):
+                                    if "percentage" in metric.lower():
+                                        print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}%" for v in value)}')
+                                    else:
+                                        print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}" for v in value)}')
                                 else:
-                                    print(f'\t\t- {metric}: {value:,.1f}')
-                            elif type(value) in (list, tuple):
-                                if "percentage" in metric.lower():
-                                    print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}%" for v in value)}')
-                                else:
-                                    print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}" for v in value)}')
-                            else:
-                                print(f'\t\t- {metric}: {value}')
+                                    print(f'\t\t- {metric}: {value}')
 
-                    print("\n")
+                        print("\n")
 
 
     def write_json_file(self, results):

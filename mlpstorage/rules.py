@@ -247,6 +247,8 @@ class BenchmarkResult:
 
     def __init__(self, benchmark_result_root_dir, logger):
         self.benchmark_result_root_dir = benchmark_result_root_dir
+        self.submitter_metadata = {}
+
         self.logger = logger
         self.metadata = None
         self.summary = None
@@ -254,7 +256,15 @@ class BenchmarkResult:
         self.per_rank_per_epoch_stats = {}
         self.per_rank_outputs = {}
         self.issues = []
+
+        if os.path.exists("submitter_path_indexes.json"):
+            with open("submitter_path_indexes.json", "r") as f:
+                self.SUBMITTER_SYSTEM_PATH_INDEXES = json.load(f)
+        else:
+            self.SUBMITTER_SYSTEM_PATH_INDEXES = None
+
         self._process_result_directory()
+
 
     def _process_result_directory(self):
         """Process the result directory to extract metadata and metrics"""
@@ -262,6 +272,26 @@ class BenchmarkResult:
         self._load_dlio_summary_file()
         self._load_hydra_configs()
         self._load_per_rank_per_epoch_stats()
+        # self._load_per_rank_outputs()
+        if self.SUBMITTER_SYSTEM_PATH_INDEXES:
+            self._extract_submitter_metadata()
+
+    def _extract_submitter_metadata(self):
+        try:
+            split_path = self.benchmark_result_root_dir.split('/')
+            if split_path[1] in self.SUBMITTER_SYSTEM_PATH_INDEXES.keys():
+                indexes = self.SUBMITTER_SYSTEM_PATH_INDEXES[split_path[1]]
+            else:
+                indexes = self.SUBMITTER_SYSTEM_PATH_INDEXES['default']
+
+            for data, index  in indexes.items():
+                if not index:
+                    continue
+
+                self.submitter_metadata[data] = split_path[index]
+        except Exception as e:
+            import pdb
+            pdb.set_trace()
 
     def _load_metadata_file(self):
         # Find and load metadata file
@@ -404,6 +434,10 @@ class BenchmarkRun:
         self.run_datetime = None
         self.result_root_dir = None
 
+        self.submitter = None
+        self.submitted_category = None
+        self.system_name = None
+
         self.benchmark_result = benchmark_result
         self.benchmark_instance = benchmark_instance
 
@@ -449,6 +483,9 @@ class BenchmarkRun:
         """Convert the BenchmarkRun object to a dictionary"""
         ret_dict = {
             "run_id": str(self.run_id),
+            "submitter": self.submitter,
+            "system_name": self.system_name,
+            "submitted_category": self.submitted_category,
             "benchmark_type": self.benchmark_type.name,
             "model": self.model,
             "command": self.command,
@@ -485,6 +522,11 @@ class BenchmarkRun:
 
     def _process_benchmark_result(self, benchmark_result):
         """Extract parameters and system info from result files"""
+        if benchmark_result.submitter_metadata:
+            self.submitter = benchmark_result.submitter_metadata.get('submitter', None)
+            self.submitted_category = benchmark_result.submitter_metadata.get('submitted_category', None)
+            self.system_name = benchmark_result.submitter_metadata.get('system_name', None)
+
         # Process the summary and hydra configs to find what was run
         summary_workload = benchmark_result.summary.get('workload', {})
         hydra_workload_config = benchmark_result.hydra_configs.get("config.yaml", {}).get("workload", {})

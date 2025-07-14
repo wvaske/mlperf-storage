@@ -29,3 +29,4 @@ packages = {find = {}}
 
 [project.scripts]
 mlpstorage = 'mlpstorage.main:main'
+mlpsrg = 'mlpstorage.main:run_reportgen'

@@ -157,6 +157,43 @@ def parse_arguments():
     validate_args(parsed_args)
     return parsed_args
 
+def parse_reportgen_arguments():
+    """
+    Parse arguments for the reportgen shortcut command.
+    This is a shortcut to 'mlpstorage reports reportgen'.
+    """
+    parser = argparse.ArgumentParser(description="Generate a report from benchmark results (shortcut to 'mlpstorage reports reportgen')")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
+
+    standard_args = parser.add_argument_group("Standard Arguments")
+    standard_args.add_argument('--results-dir', '-rd', type=str, default=DEFAULT_RESULTS_DIR, help=help_messages['results_dir'])
+    standard_args.add_argument('--output-dir', type=str, help=help_messages['output_dir'])
+    standard_args.add_argument('--config-file', '-c', type=str, help="Path to YAML file with argument overrides")
+    standard_args.add_argument('--verify-structure', '-vs', action="store_true", help="Verify the structure of the results directory")
+    standard_args.add_argument("--metadata-only", "-mo", action="store_true", help="Only print metadata, not runs, issues or metrics")
+
+    output_control = parser.add_argument_group("Output Control")
+    output_control.add_argument("--debug", action="store_true", help="Enable debug mode")
+    output_control.add_argument("--verbose", action="store_true", help="Enable verbose mode")
+    output_control.add_argument("--stream-log-level", type=str, default="INFO",)
+
+    view_only_args = parser.add_argument_group("View Only")
+    view_only_args.add_argument("--what-if", action="store_true", help="View the configuration that would execute and "
+                                                                       "the associated command.")
+    
+    parsed_args = parser.parse_args()
+
+    # Set the program and command to match the reports reportgen structure
+    parsed_args.program = "reports"
+    parsed_args.command = "reportgen"
+    
+    # Apply YAML config file overrides if specified
+    if hasattr(parsed_args, 'config_file') and parsed_args.config_file:
+        parsed_args = apply_yaml_config_overrides(parsed_args)
+
+    validate_args(parsed_args)
+    return parsed_args
+
 def apply_yaml_config_overrides(args):
     """
     Apply overrides from a YAML config file to the parsed arguments.

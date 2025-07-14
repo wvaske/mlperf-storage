@@ -4,7 +4,7 @@ import signal
 import sys
 
 from mlpstorage.benchmarks import TrainingBenchmark, VectorDBBenchmark, CheckpointingBenchmark
-from mlpstorage.cli import parse_arguments, validate_args, update_args
+from mlpstorage.cli import parse_arguments, update_args, parse_reportgen_arguments
 from mlpstorage.config import HISTFILE, DATETIME_STR, EXIT_CODE, DEFAULT_RESULTS_DIR, get_datetime_string, HYDRA_OUTPUT_SUBDIR
 from mlpstorage.debug import debugger_hook, MLPS_DEBUG
 from mlpstorage.history import HistoryTracker
@@ -58,6 +58,32 @@ def run_benchmark(args, run_datetime):
         except Exception as e:
             logger.error(f"Error writing metadata: {str(e)}")
             return ret_code
+
+def run_reportgen():
+    """
+    Entry point for the reportgen shortcut command.
+    This is equivalent to running 'mlpstorage reports reportgen'.
+    """
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    global signal_received
+
+    args = parse_reportgen_arguments()
+    if args.debug or MLPS_DEBUG:
+        sys.excepthook = debugger_hook
+
+    apply_logging_options(logger, args)
+
+    datetime_str = DATETIME_STR
+
+    hist = HistoryTracker(history_file=HISTFILE, logger=logger)
+    # Save this command to history
+    hist.add_entry(sys.argv, datetime_str=datetime_str)
+
+    # Generate the report using the same logic as in main()
+    results_dir = args.results_dir if hasattr(args, 'results_dir') else DEFAULT_RESULTS_DIR
+    report_generator = ReportGenerator(results_dir, args, logger=logger)
+    return report_generator.generate_reports()
 
 
 def main():

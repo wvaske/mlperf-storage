@@ -5,6 +5,7 @@ Standalone script to process a benchmark result directory and create BenchmarkRe
 
 import argparse
 import json
+import pdb
 import sys
 import os
 from pathlib import Path
@@ -54,6 +55,7 @@ def main():
         # Create BenchmarkResult object
         logger.info(f"Processing benchmark result directory: {args.result_dir}")
         benchmark_result = BenchmarkResult(args.result_dir, logger)
+
         logger.verbose(f'BenchmarkResult __dict__:')
         print(json.dumps(benchmark_result.__dict__, indent=2, default=str))
 

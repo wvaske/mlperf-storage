@@ -108,6 +108,7 @@ DEFAULT_RESULTS_DIR = os.path.join(tempfile.gettempdir(), f"mlperf_storage_resul
 import enum
 
 class EXIT_CODE(enum.IntEnum):
+    INTERRUPTED = -1
     SUCCESS = 0
     GENERAL_ERROR = 1
     INVALID_ARGUMENTS = 2
