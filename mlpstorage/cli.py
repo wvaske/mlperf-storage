@@ -167,7 +167,7 @@ def parse_reportgen_arguments():
 
     standard_args = parser.add_argument_group("Standard Arguments")
     standard_args.add_argument('--results-dir', '-rd', type=str, default=DEFAULT_RESULTS_DIR, help=help_messages['results_dir'])
-    standard_args.add_argument('--output-dir', type=str, help=help_messages['output_dir'])
+    standard_args.add_argument('--output-dir', '-o', type=str, help="Output directory for the report. No report written if not specified.")
     # standard_args.add_argument('--config-file', '-c', type=str, help="Path to YAML file with argument overrides")
     standard_args.add_argument('--verify-structure', '-vs', action="store_true", help="Verify the structure of the results directory")
     standard_args.add_argument("--metadata-only", "-mo", action="store_true", help="Only print metadata, not runs, issues or metrics")

@@ -2,6 +2,7 @@ import abc
 import enum
 import json
 import os
+import pdb
 import yaml
 
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from mlpstorage.config import (MODELS, PARAM_VALIDATION, MAX_READ_THREADS_TRAINING, LLM_MODELS, BENCHMARK_TYPES,
                                DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, HYDRA_OUTPUT_SUBDIR, UNET, RESNET,
-                               COSMOFLOW, AU_REQUIREMENT)
+                               COSMOFLOW, AU_REQUIREMENT, LLM_SIZE_BY_RANK,)
 from mlpstorage.mlps_logging import setup_logging
 from mlpstorage.utils import is_valid_datetime_format
 
@@ -985,6 +986,84 @@ class CheckpointSubmissionRulesChecker(MultiRunRulesChecker):
 
         return issues
 
+    def check_filesystem_cache(self):
+        # The filesystem cache needs to be cleared before reads if memory is > 3x the checkpoint size
+        issues = []
+
+        for benchmark_run in self.benchmark_runs:
+            # Get total memory size and amount of data in fileystem cache
+            # Compare to size of checkpoint based on num_processes and LLM_SIZE_BY_RANK
+            # Some host have a smaller checkpoint responsiblity so we need to look at the minimum
+            model = benchmark_run.model
+            num_processes = benchmark_run.benchmark_result.summary['num_accelerators']
+            num_hosts = benchmark_run.benchmark_result.summary['num_hosts']
+            host_mem_sizes = benchmark_run.benchmark_result.summary['host_memory_GB']
+            per_rank_gb = calculate_checkpointing_size(model, num_processes, self.logger)
+
+            # We're assuming round-robin rank placement. The first ranks will need more memory but they should
+            # be distributed across all hosts
+            # We'll create a map of hosts and a list of ranks to accumulate the memory requirements per host
+            host_data = {i: {'total_mem': host_mem_sizes[i], 'rank_indexes': list(), 'total_checkpoint_gb': 0} for i in range(num_hosts)}
+
+            for i, rank_gb in enumerate(per_rank_gb):
+                host = i % num_hosts
+                host_data[host]['rank_indexes'].append(i)
+                host_data[host]['total_checkpoint_gb'] += per_rank_gb[i]
+
+            for host, data in host_data.items():
+                data['dataset_mem_multiplier'] = data['total_mem'] / data['total_checkpoint_gb']
+                if data['total_mem'] > 3 * data['total_checkpoint_gb']:
+                    host_data[host]['clear_cache_required'] = True
+                else:
+                    host_data[host]['clear_cache_required'] = False
+
+            clear_cache_required = any({data['clear_cache_required'] for data in host_data.values()})
+
+            num_reads = benchmark_run.parameters.get('checkpoint', {}).get('num_checkpoints_read', 0)
+            num_writes = benchmark_run.parameters.get('checkpoint', {}).get('num_checkpoints_write', 0)
+            if num_reads >= 1:
+                # We need to verify cache was cleared if required
+                if benchmark_run.benchmark_result.per_rank_outputs:
+                    # Look at the individual outputs and how much memory the host had in cache
+                    # Not the default behavior, will do this later
+                    continue
+
+                filesystem_cache_size_kB = int(benchmark_run.benchmark_result.summary['host_meminfo']['Cached'].split()[0])
+                filesystem_cache_size_GB = filesystem_cache_size_kB / 1024 / 1024
+
+                if clear_cache_required and filesystem_cache_size_GB > 3 * host_data[0]['total_checkpoint_gb']:
+                    issues.append(
+                        Issue(
+                            validation=PARAM_VALIDATION.INVALID,
+                            message=f"Filesystem cache was not cleared before read operations.",
+                            parameter="filesystem_cache_size_GB",
+                            expected=f"<= {3 * host_data[0]['total_checkpoint_gb']:.1f} GB",
+                            actual=f"{filesystem_cache_size_GB:.2f} GB",
+                        )
+                    )
+                elif clear_cache_required and filesystem_cache_size_GB <= 3 * host_data[0]['total_checkpoint_gb']:
+                    issues.append(
+                        Issue(
+                            validation=PARAM_VALIDATION.CLOSED,
+                            message=f"Filesystem cache was cleared before read operations.",
+                            parameter="filesystem_cache_size_GB",
+                            expected=f"<= {3 * host_data[0]['total_checkpoint_gb']:.1f} GB",
+                            actual=f"{filesystem_cache_size_GB:.2f} GB"
+                        )
+                    )
+                elif not clear_cache_required:
+                    issues.append(
+                        Issue(
+                            validation=PARAM_VALIDATION.CLOSED,
+                            message=f"Clearing cache not required before read operations",
+                            parameter="memory_capacity_to_dataset_size",
+                            expected=f"<= {3 * host_data[0]['total_checkpoint_gb']:.1f} GB",
+                            actual=f"{host_mem_sizes[0]:.2f} GB"
+                        )
+                    )
+
+        return issues
+
 
 class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
     supported_models = MODELS
@@ -1171,6 +1250,35 @@ class BenchmarkVerifier:
                 self.benchmark_runs[0].category = PARAM_VALIDATION.CLOSED
             self.logger.status(f'Benchmark run qualifies for CLOSED category ({run_ids[0]})')
             return PARAM_VALIDATION.CLOSED
+
+
+def calculate_checkpointing_size(model, num_processes, logger) -> List[float]:
+
+    # Calculate the total writes per rank which equates to memory required per rank
+    # If zero_level is 1, then rank 0 writes the entire model,
+    # If zero_level is 3, then the model is sharded across all ranks
+    min_procs, zero_level, GPUpDP, ClosedGPUs = LLM_ALLOWED_VALUES.get(model)
+    model_gb, optimizer_gb = LLM_SIZE_BY_RANK.get(model)
+    rank_gb = []
+
+    logger.verbose(f'Model & optimizer size: {model_gb:.2f} GB, {optimizer_gb:.2f} GB')
+    for rank in range(num_processes):
+        rank_gb.append(0)
+        if zero_level == 1:
+            logger.debug(
+                "Optimizer is written by all ranks, but only the ranks on the first DP instance write the model")
+            rank_gb[rank] = optimizer_gb / num_processes
+            if rank < GPUpDP:
+                rank_gb[rank] += model_gb / GPUpDP
+                logger.debug(f'First DP: rank-{rank} write model: {rank_gb[rank]:.2f} GB')
+        elif zero_level == 3:
+            rank_gb[rank] = (model_gb + optimizer_gb) / num_processes
+            logger.debug(f'Rank {rank} writes portion of model and optimizer: {rank_gb[rank]:.2f} GB')
+        else:
+            logger.error(f'Invalid zero_level: {zero_level}')
+            raise ValueError("Invalid zero_level")
+
+    return rank_gb
 
 
 def calculate_training_data_size(args, cluster_information, dataset_params, reader_params, logger,

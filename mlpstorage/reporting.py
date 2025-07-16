@@ -76,8 +76,9 @@ class ReportGenerator:
         self.logger.info(f'Generating reports for {self.results_dir}')
         run_result_dicts = [report.benchmark_run.as_dict() for report in self.run_results.values()]
 
-        self.write_csv_file(run_result_dicts)
-        self.write_json_file(run_result_dicts)
+        if self.args.output_dir:
+            self.write_csv_file(run_result_dicts)
+            self.write_json_file(run_result_dicts)
             
         return EXIT_CODE.SUCCESS
 

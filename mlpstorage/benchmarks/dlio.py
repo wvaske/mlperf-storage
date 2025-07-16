@@ -8,7 +8,7 @@ from mlpstorage.benchmarks.base import Benchmark
 from mlpstorage.config import (CONFIGS_ROOT_DIR, BENCHMARK_TYPES, EXEC_TYPE, MPIRUN, MLPSTORAGE_BIN_NAME,
                                LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, EXIT_CODE, MODELS, HYDRA_OUTPUT_SUBDIR,
                                LLM_SIZE_BY_RANK)
-from mlpstorage.rules import calculate_training_data_size, HostInfo, HostMemoryInfo, HostCPUInfo, ClusterInformation
+from mlpstorage.rules import calculate_training_data_size, HostInfo, HostMemoryInfo, HostCPUInfo, ClusterInformation, calculate_checkpointing_size
 from mlpstorage.utils import (read_config_from_file, create_nested_dict, update_nested_dict, generate_mpi_prefix_cmd)
 
 
@@ -291,33 +291,10 @@ class CheckpointingBenchmark(DLIOBenchmark):
         return EXIT_CODE.SUCCESS
 
     def datasize(self):
+        per_rank_gb = calculate_checkpointing_size(self.args.model, self.args.num_processes, self.logger)
         self.logger.verbose(f'Running datasize for {self.args.model}...')
-        # Calculate the total writes per rank which equates to memory required per rank
-        # If zero_level is 1, then rank 0 writes the entire model,
-        # If zero_level is 3, then the model is sharded across all ranks
-        min_procs, zero_level, GPUpDP, ClosedGPUs = LLM_ALLOWED_VALUES.get(self.args.model)
-        model_gb, optimizer_gb = LLM_SIZE_BY_RANK.get(self.args.model)
-        rank_gb = []
 
-        self.logger.verbose(f'Model & optimizer size: {model_gb:.2f} GB, {optimizer_gb:.2f} GB')
-        for rank in range(self.args.num_processes):
-            rank_gb.append(0)
-            if zero_level == 1:
-                self.logger.debug("Optimizer is written by all ranks, but only the ranks on the first DP instance write the model")
-                rank_gb[rank] = optimizer_gb / self.args.num_processes
-                if rank < GPUpDP:
-                    rank_gb[rank] += model_gb / GPUpDP
-                    self.logger.debug(f'First DP: rank-{rank} write model: {rank_gb[rank]:.2f} GB')
-            elif zero_level == 3:
-                rank_gb[rank] = (model_gb + optimizer_gb) / self.args.num_processes
-                self.logger.debug(f'Rank {rank} writes portion of model and optimizer: {rank_gb[rank]:.2f} GB')
-            else:
-                self.logger.error(f'Invalid zero_level: {zero_level}')
-                raise ValueError("Invalid zero_level")
-
-        rank_string = "\n\t".join(f"Rank {rank}: {rank_gb[rank]:.2f} GB" for rank in range(self.args.num_processes))
+        rank_string = "\n\t".join(f"Rank {rank}: {per_rank_gb[rank]:.2f} GB" for rank in range(self.args.num_processes))
 
         self.logger.result(f'Total GB required per rank:\n\t{rank_string}')
-        self.logger.result(f'Total GB required for all ranks: {sum(rank_gb):.2f} GB')
-
-
+        self.logger.result(f'Total GB required for all ranks: {sum(per_rank_gb):.2f} GB')
