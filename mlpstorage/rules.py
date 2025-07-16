@@ -1303,7 +1303,7 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
     def check_inter_test_times(self) -> Optional[Issue]:
         # This can only operate on BenchmarkResults and not Benchmarks
         # Check if each benchmark_run has the benchmark_result attribute
-
+        issues = []
         # Keep a tuple with the start and end time of each run, how long it took and the run object.
         runs_timestamps : List[Tuple[datetime, datetime, BenchmarkRun]] = []
         for run in self.benchmark_runs:
@@ -1358,17 +1358,26 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
         prev_end = runs_timestamps[0][1]
         for start, end, run in runs_timestamps[1:]:
             if prev_end is not None and start - prev_end > mean_run_time:
-                return Issue(
-                            validation=PARAM_VALIDATION.INVALID,
-                            message=f"Benchmark run {run.run_id} started too long after previous run",
-                            severity="error"
-                        )
-            prev_end = end
-        return Issue(
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Benchmark run {run.run_id} started too long after previous run",
+                    parameter="inter_run_time",
+                    expected=f"<= {mean_run_time.total_seconds():.2f} seconds",
+                    actual=f"{(start - prev_end).total_seconds():.2f} seconds",
+                    severity="error"
+                ))
+            else:
+                issues.append(Issue(
                     validation=PARAM_VALIDATION.CLOSED,
-                    message=f"All runs were consecutive.",
-                    severity="info",
-                )
+                    message=f"Benchmark run {run.run_id} was within acceptable timeframe.",
+                    parameter="inter_run_time",
+                    expected=f"<= {mean_run_time.total_seconds():.2f} seconds",
+                    actual=f"{(start - prev_end).total_seconds():.2f} seconds",
+                    severity="info"
+                ))
+            prev_end = end
+        return issues
+
 
 class BenchmarkVerifier:
 
