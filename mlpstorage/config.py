@@ -57,7 +57,8 @@ ACCELERATORS = [H100, A100]
 
 OPEN = "open"
 CLOSED = "closed"
-CATEGORIES = [OPEN, CLOSED]
+INVALID = "invalid"
+CATEGORIES = [OPEN, CLOSED, INVALID]
 
 LLAMA3_8B = "llama3-8b"
 LLAMA3_70B = 'llama3-70b'

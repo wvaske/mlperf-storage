@@ -9,7 +9,7 @@ from statistics import mean, median, stdev
 from typing import List, Dict, Any
 
 from mlpstorage.mlps_logging import setup_logging, apply_logging_options
-from mlpstorage.config import MLPS_DEBUG, BENCHMARK_TYPES, EXIT_CODE, PARAM_VALIDATION, LLM_MODELS, MODELS, ACCELERATORS
+from mlpstorage.config import MLPS_DEBUG, BENCHMARK_TYPES, EXIT_CODE, PARAM_VALIDATION, LLM_MODELS, MODELS, ACCELERATORS, CATEGORIES
 from mlpstorage.rules import get_runs_files, BenchmarkVerifier, BenchmarkRun, Issue
 from mlpstorage.utils import flatten_nested_dict, remove_nan_values, aggregate_run_metrics
 
@@ -54,6 +54,7 @@ class ReportGenerator:
 
         self.run_results = dict()           # {run_id : result_dict }
         self.workload_results = dict()      # {(model) | (model, accelerator) : result_dict }
+        self.submitter_overview = dict()    # {submitter: {category: {num_runs: int, num_workloads: int}}
         self.accumulate_results()
 
         if not self.args.no_print:
@@ -113,6 +114,14 @@ class ReportGenerator:
                 category=category,
                 metrics=benchmark_run.metrics
             )
+
+            if benchmark_run.submitter not in self.submitter_overview.keys():
+                self.submitter_overview[benchmark_run.submitter] = dict()
+
+            if benchmark_run.system_name not in self.submitter_overview[benchmark_run.submitter].keys():
+                self.submitter_overview[benchmark_run.submitter][benchmark_run.system_name] = {cat: {"num_runs": 0, "num_workloads": 0} for cat in CATEGORIES}
+
+            self.submitter_overview[benchmark_run.submitter][benchmark_run.system_name][category.value]['num_runs'] += 1
             self.run_results[benchmark_run.run_id] = Result(**result_dict)
 
         if self.args.runs_only:
@@ -157,6 +166,13 @@ class ReportGenerator:
             elif len(runs) == 1:
                 result_dict["metrics"] = runs[0].metrics
 
+            if runs[0].submitter not in self.submitter_overview.keys():
+                self.submitter_overview[runs[0].submitter] = dict()
+
+            if system_name not in self.submitter_overview[runs[0].submitter].keys():
+                self.submitter_overview[runs[0].submitter][system_name] = {cat: {"num_runs": 0, "num_workloads": 0} for cat in CATEGORIES}
+
+            self.submitter_overview[runs[0].submitter][system_name][category.value]['num_workloads'] += 1
             self.workload_results[workload_key] = Result(**result_dict)
 
         self.logger.result(f'Found {len(workload_runs)} workloads across {len(systems)} systems')
@@ -204,73 +220,88 @@ class ReportGenerator:
 
                     print("\n")
 
-        if self.args.runs_only:
-            return
+        if not self.args.runs_only:
+            print("\n========================= Submissions Report =========================")
+            print("This report represents aggregated runs of benchmarks for submissions")
+            submitters = []
+            for workload_key in self.workload_results.keys():
+                submitter, system_name, model, accelerator = workload_key
+                if submitter not in submitters:
+                    submitters.append(submitter)
 
-        print("\n========================= Submissions Report =========================")
-        print("This report represents aggregated runs of benchmarks for submissions")
-        submitters = []
-        for workload_key in self.workload_results.keys():
-            submitter, system_name, model, accelerator = workload_key
-            if submitter not in submitters:
-                submitters.append(submitter)
+            for category in [PARAM_VALIDATION.CLOSED, PARAM_VALIDATION.OPEN, PARAM_VALIDATION.INVALID]:
+                print(f"\n------------------------- {category.value.upper()} Report -------------------------")
+                for submitter in submitters:
+                    for workload_key, workload_result in self.workload_results.items():
+                        if workload_result.category == category and workload_key[0] == submitter:
+                            submitter, system_name, model, accelerator = workload_key
+                            if workload_result.benchmark_model in LLM_MODELS:
+                                workload_id = f"Checkpointing - {workload_result.benchmark_model}"
+                            elif workload_result.benchmark_model in MODELS:
+                                accelerator = workload_result.benchmark_run[0].accelerator
+                                workload_id = (f"Training - {workload_result.benchmark_model}, "
+                                               f"Accelerator: {accelerator}")
+                            else:
+                                print(f'Unknown workload type: {workload_result.benchmark_model}')
 
-        for category in [PARAM_VALIDATION.CLOSED, PARAM_VALIDATION.OPEN, PARAM_VALIDATION.INVALID]:
-            print(f"\n------------------------- {category.value.upper()} Report -------------------------")
-            for submitter in submitters:
-                for workload_key, workload_result in self.workload_results.items():
-                    if workload_result.category == category and workload_key[0] == submitter:
-                        submitter, system_name, model, accelerator = workload_key
-                        if workload_result.benchmark_model in LLM_MODELS:
-                            workload_id = f"Checkpointing - {workload_result.benchmark_model}"
-                        elif workload_result.benchmark_model in MODELS:
-                            accelerator = workload_result.benchmark_run[0].accelerator
-                            workload_id = (f"Training - {workload_result.benchmark_model}, "
-                                           f"Accelerator: {accelerator}")
-                        else:
-                            print(f'Unknown workload type: {workload_result.benchmark_model}')
+                            print(f'\tWorkloadID: {workload_id}')
+                            print(f'\t    Submitter: {submitter}')
+                            print(f'\t    System Name: {system_name}')
+                            print(f'\t    Benchmark Type: {workload_result.benchmark_type.value}')
+                            if workload_result.benchmark_command:
+                                print(f'\t    Command: {workload_result.benchmark_command}')
 
-                        print(f'\tWorkloadID: {workload_id}')
-                        print(f'\t    Submitter: {submitter}')
-                        print(f'\t    System Name: {system_name}')
-                        print(f'\t    Benchmark Type: {workload_result.benchmark_type.value}')
-                        if workload_result.benchmark_command:
-                            print(f'\t    Command: {workload_result.benchmark_command}')
+                            if self.args.metadata_only:
+                                print(f'\t    Run0 ID: {workload_result.benchmark_run[0].run_id}')
+                                print("\n")
+                                continue
 
-                        if self.args.metadata_only:
-                            print(f'\t    Run0 ID: {workload_result.benchmark_run[0].run_id}')
+                            print(f'\t    Runs: ')
+                            for run in workload_result.benchmark_run:
+                                print(f'\t\t- {run.run_id} - [{self.run_results[run.run_id].category.value.upper()}]')
+
+                            if workload_result.issues:
+                                print(f'\t    Issues:')
+                                for issue in workload_result.issues:
+                                    print(f'\t\t- {issue}')
+                            else:
+                                print(f'\t\t- No issues found')
+
+                            if workload_result.metrics:
+                                print(f'\t    Metrics:')
+                                for metric, value in sorted(workload_result.metrics.items()):
+                                    if type(value) in (int, float):
+                                        if "percentage" in metric.lower():
+                                            print(f'\t\t- {metric}: {value:,.1f}%')
+                                        else:
+                                            print(f'\t\t- {metric}: {value:,.1f}')
+                                    elif type(value) in (list, tuple):
+                                        if "percentage" in metric.lower():
+                                            print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}%" for v in value)}')
+                                        else:
+                                            print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}" for v in value)}')
+                                    else:
+                                        print(f'\t\t- {metric}: {value}')
+
                             print("\n")
-                            continue
 
-                        print(f'\t    Runs: ')
-                        for run in workload_result.benchmark_run:
-                            print(f'\t\t- {run.run_id} - [{self.run_results[run.run_id].category.value.upper()}]')
+        print("\n========================= Submitter Overview Report =========================")
+        for submitter, overview in self.submitter_overview.items():
+            print(f"\n------------------------- {submitter} Report -------------------------")
+            total_workloads = {cat: 0 for cat in CATEGORIES}
+            total_runs = {cat: 0 for cat in CATEGORIES}
+            for system_name, category_count in overview.items():
+                print(f'\tSystem Name: {system_name}')
+                for category in CATEGORIES:
+                    counts = category_count.get(category, {"num_workloads": 0, "num_runs": 0})
+                    total_workloads[category] += counts["num_workloads"]
+                    total_runs[category] += counts["num_runs"]
+                    print(f'\t    {category.upper()} Workloads:\t{counts["num_workloads"]}    (Runs: {counts["num_runs"]})')
+                print()
 
-                        if workload_result.issues:
-                            print(f'\t    Issues:')
-                            for issue in workload_result.issues:
-                                print(f'\t\t- {issue}')
-                        else:
-                            print(f'\t\t- No issues found')
-
-                        if workload_result.metrics:
-                            print(f'\t    Metrics:')
-                            for metric, value in sorted(workload_result.metrics.items()):
-                                if type(value) in (int, float):
-                                    if "percentage" in metric.lower():
-                                        print(f'\t\t- {metric}: {value:,.1f}%')
-                                    else:
-                                        print(f'\t\t- {metric}: {value:,.1f}')
-                                elif type(value) in (list, tuple):
-                                    if "percentage" in metric.lower():
-                                        print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}%" for v in value)}')
-                                    else:
-                                        print(f'\t\t- {metric}: {", ".join(f"{v:,.1f}" for v in value)}')
-                                else:
-                                    print(f'\t\t- {metric}: {value}')
-
-                        print("\n")
-
+            for cat in CATEGORIES:
+                print(f'\nTotal {cat.upper()} Workloads: {total_workloads[cat]}    ')
+                print(f'Total {cat.upper()} Runs: {total_runs[cat]}')
 
     def write_json_file(self, results):
         json_file = os.path.join(self.results_dir,'results.json')
