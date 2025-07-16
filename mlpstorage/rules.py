@@ -9,11 +9,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pprint import pprint, pformat
 from statistics import mean
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 
 from mlpstorage.config import (MODELS, PARAM_VALIDATION, MAX_READ_THREADS_TRAINING, LLM_MODELS, BENCHMARK_TYPES,
                                DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, HYDRA_OUTPUT_SUBDIR, UNET, RESNET,
-                               COSMOFLOW, AU_REQUIREMENT, LLM_SIZE_BY_RANK,)
+                               COSMOFLOW, AU_REQUIREMENT, LLM_SIZE_BY_RANK, CLOSED, OPEN)
 from mlpstorage.mlps_logging import setup_logging
 from mlpstorage.utils import is_valid_datetime_format
 
@@ -526,7 +526,7 @@ class BenchmarkRun:
         """Extract parameters and system info from result files"""
         if benchmark_result.submitter_metadata:
             self.submitter = benchmark_result.submitter_metadata.get('submitter', None)
-            self.submitted_category = benchmark_result.submitter_metadata.get('submitted_category', None)
+            self.submitted_category = benchmark_result.submitter_metadata.get('submitted_category', CLOSED).lower()
             self.system_name = benchmark_result.submitter_metadata.get('system_name', None)
 
         # Process the summary and hydra configs to find what was run
@@ -689,6 +689,45 @@ class RunRulesChecker(RulesChecker):
         super().__init__(*args, **kwargs)
         self.benchmark_run = benchmark_run
 
+    def _check_allowed_params(self, closed_allowed_params, open_allowed_params):
+        """
+        This method will verify that the only parameters that were set were the allowed parameters.
+        Allowed for closed:
+          - dataset.num_files_train
+          - dataset.num_subfolders_train
+          -
+        :return:
+        """
+        issues = []
+        for param, value in self.benchmark_run.override_parameters.items():
+            if param.startswith("workflow"):
+                # We handle workflow parameters separately
+                continue
+            self.logger.debug(f"Processing override parameter: {param} = {value}")
+            if param in closed_allowed_params:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.CLOSED,
+                    message=f"Closed parameter override allowed: {param} = {value}",
+                    parameter="Overrode Parameters",
+                    actual=value
+                ))
+            elif param in open_allowed_params:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.OPEN,
+                    message=f"Open parameter override allowed: {param} = {value}",
+                    parameter="Overrode Parameters",
+                    actual=value
+                ))
+            else:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Disallowed parameter override: {param} = {value}",
+                    parameter="Overrode Parameters",
+                    expected="None",
+                    actual=value
+                ))
+        return issues
+
 
 class MultiRunRulesChecker(RulesChecker):
     """Rules checker for multiple benchmark runs as for a single workload or for the full submission"""
@@ -793,7 +832,7 @@ class TrainingRunRulesChecker(RunRulesChecker):
         
         return None
 
-    def check_allowed_params(self) -> Optional[Issue]:
+    def check_allowed_params(self) -> Optional[Union[List[Issue], Issue]]:
         """
         This method will verify that the only parameters that were set were the allowed parameters.
         Allowed for closed:
@@ -807,34 +846,7 @@ class TrainingRunRulesChecker(RunRulesChecker):
                                  'reader.odirect', 'reader.prefetch_size', 'checkpoint.checkpoint_folder',
                                  'storage.storage_type', 'storage.storage_root']
         open_allowed_params = ['framework', 'dataset.format', 'dataset.num_samples_per_file', 'reader.data_loader']
-        issues = []
-        for param, value in self.benchmark_run.override_parameters.items():
-            if param.startswith("workflow"):
-                # We handle workflow parameters separately
-                continue
-            self.logger.debug(f"Processing override parameter: {param} = {value}")
-            if param in closed_allowed_params:
-                issues.append(Issue(
-                    validation=PARAM_VALIDATION.CLOSED,
-                    message=f"Closed parameter override allowed: {param} = {value}",
-                    parameter="Overrode Parameters",
-                    actual=value
-                ))
-            elif param in open_allowed_params:
-                issues.append(Issue(
-                    validation=PARAM_VALIDATION.OPEN,
-                    message=f"Open parameter override allowed: {param} = {value}",
-                    parameter="Overrode Parameters",
-                    actual=value
-                ))
-            else:
-                issues.append(Issue(
-                    validation=PARAM_VALIDATION.INVALID,
-                    message=f"Disallowed parameter override: {param} = {value}",
-                    parameter="Overrode Parameters",
-                    expected="None",
-                    actual=value
-                ))
+        issues = self._check_allowed_params(closed_allowed_params, open_allowed_params)
         return issues
 
     def check_workflow_parameters(self) -> Optional[Issue]:
@@ -917,8 +929,99 @@ class TrainingRunRulesChecker(RunRulesChecker):
 
 class CheckpointingRunRulesChecker(RunRulesChecker):
     """Rules checker for checkpointing benchmarks"""
-    def check_benchmark_type(self) -> Optional[Issue]:
-        pass
+
+    def check_num_processes(self):
+        issues = []
+        category = self.benchmark_run.submitted_category
+        num_processes = self.benchmark_run.benchmark_result.summary['num_accelerators']
+        mode = self.benchmark_run.parameters['checkpoint'].get('mode')
+        if category == CLOSED:
+            if mode == "subset":
+                if num_processes != 8:
+                    issues.append(Issue(
+                        validation=PARAM_VALIDATION.INVALID,
+                        message=f"Expected 8 processes for subset checkpointing, but found {num_processes}",
+                        parameter="num_processes",
+                        expected="8",
+                        actual=num_processes
+                    ))
+                elif num_processes == 8:
+                    issues.append(Issue(
+                        validation=PARAM_VALIDATION.CLOSED,
+                        message=f"Expected 8 processes for subset checkpointing, and found {num_processes}",
+                        parameter="num_processes",
+                        expected="8",
+                        actual=num_processes
+                    ))
+            elif mode:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Unexpected value for checkpointing mode: {mode}",
+                    parameter="checkpoint.mode",
+                    expected="subset or None",
+                    actual=mode
+                ))
+            else:
+                closed_processes = LLM_ALLOWED_VALUES[self.benchmark_run.model][3]
+                if num_processes != closed_processes:
+                    issues.append(Issue(
+                        validation=PARAM_VALIDATION.INVALID,
+                        message=f"Expected {closed_processes} processes for checkpointing, but found {num_processes}",
+                        parameter="num_processes",
+                        expected=closed_processes,
+                        actual=num_processes
+                    ))
+                elif num_processes == closed_processes:
+                    issues.append(Issue(
+                        validation=PARAM_VALIDATION.CLOSED,
+                        message=f"Expected {closed_processes} processes for checkpointing, and found {num_processes}",
+                        parameter="num_processes",
+                        expected=closed_processes,
+                        actual=num_processes
+                    ))
+        elif category == OPEN:
+            data_parallel_processes = LLM_ALLOWED_VALUES[self.benchmark_run.model][2]
+            if num_processes % data_parallel_processes == 0:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.OPEN,
+                    message=f"Number of processes ({num_processes}) is a multiple of {data_parallel_processes}",
+                    parameter="num_processes",
+                    expected=num_processes,
+                    actual=num_processes
+                ))
+            elif num_processes < data_parallel_processes:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Expected at least {data_parallel_processes} processes for OPEN checkpointing, but found {num_processes}",
+                    parameter="num_processes",
+                    expected=data_parallel_processes,
+                    actual=num_processes
+                ))
+
+            elif num_processes % data_parallel_processes != 0:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Number of processes should be a multiple of {data_parallel_processes}, but found {num_processes}",
+                    parameter="num_processes",
+                    expected=f"{data_parallel_processes} multiple",
+                    actual=num_processes
+                ))
+        return issues
+
+    def check_allowed_params(self) -> Optional[Union[List[Issue], Issue]]:
+        """
+        This method will verify that the only parameters that were set were the allowed parameters.
+        Allowed for closed:
+          - dataset.num_files_train
+          - dataset.num_subfolders_train
+          -
+        :return:
+        """
+        closed_allowed_params = ['checkpoint.checkpoint_folder', 'checkpoint.mode', 'checkpoint.num_checkpoints_read',
+                                 'checkpoint.num_checkpoints_write']
+        open_allowed_params = []
+        issues = self._check_allowed_params(closed_allowed_params, open_allowed_params)
+        return issues
 
 
 #######################################################################################################################
