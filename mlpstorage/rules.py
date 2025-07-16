@@ -11,7 +11,8 @@ from statistics import mean
 from typing import List, Dict, Any, Optional, Tuple
 
 from mlpstorage.config import (MODELS, PARAM_VALIDATION, MAX_READ_THREADS_TRAINING, LLM_MODELS, BENCHMARK_TYPES,
-                               DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, HYDRA_OUTPUT_SUBDIR, UNET)
+                               DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, HYDRA_OUTPUT_SUBDIR, UNET, RESNET,
+                               COSMOFLOW, AU_REQUIREMENT)
 from mlpstorage.mlps_logging import setup_logging
 from mlpstorage.utils import is_valid_datetime_format
 
@@ -639,17 +640,25 @@ class RulesChecker(abc.ABC):
     """
     Base class for rule checkers that verify call the self.check_* methods
     """
-    def __init__(self, logger, *args, **kwargs):
+    def __init__(self, logger, checks=None, *args, **kwargs):
         self.logger = logger
         self.issues = []
+        self.selected_checks = checks if checks else []
         
         # Dynamically find all check methods
         self.check_methods = [getattr(self, method) for method in dir(self) 
                              if callable(getattr(self, method)) and method.startswith('check_')]
+
+        if self.selected_checks:
+            self.check_methods = [method for method in self.check_methods if method.__name__ in self.selected_checks]
+            self.logger.debug(f"Selected checks: {self.selected_checks}")
         
     def run_checks(self) -> List[Issue]:
         """Run all check methods and return a list of issues"""
         self.issues = []
+        if self.selected_checks and not self.check_methods:
+            # If checks are defined but none match, return an empty list
+            return self.issues
         for check_method in self.check_methods:
             try:
                 self.logger.debug(f"Running check {check_method.__name__}")
@@ -764,6 +773,22 @@ class TrainingRunRulesChecker(RunRulesChecker):
                 expected=f">= {required_num_files}",
                 actual=configured_num_files
             )
+        elif configured_num_files == required_num_files:
+            return Issue(
+                validation=PARAM_VALIDATION.CLOSED,
+                message=f"Number of training files is exactly required number",
+                parameter="dataset.num_files_train",
+                expected=f">= {required_num_files}",
+                actual=configured_num_files
+            )
+        elif configured_num_files > required_num_files:
+            return Issue(
+                validation=PARAM_VALIDATION.CLOSED,
+                message=f"Number of training files is more than required number",
+                parameter="dataset.num_files_train",
+                expected=f">= {required_num_files}",
+                actual=configured_num_files
+            )
         
         return None
 
@@ -849,6 +874,35 @@ class TrainingRunRulesChecker(RunRulesChecker):
             )
         else:
             return None
+
+    def check_au_success(self) -> Optional[Issue]:
+        try:
+            if self.benchmark_run.model not in MODELS:
+                # Only check  on training models
+                return
+
+            train_au_percent = self.benchmark_run.metrics.get('train_au_mean_percentage')
+
+            if train_au_percent < AU_REQUIREMENT[self.benchmark_run.model]:
+                return Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Training AU mean percentage is below 90%, model: {self.benchmark_run.model}",
+                    parameter="train_au_mean_percentage",
+                    expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+                    actual=train_au_percent
+                )
+            else:
+                return Issue(
+                    validation=PARAM_VALIDATION.CLOSED,
+                    message=f"Training AU mean percentage is 90% or above, model: {self.benchmark_run.model}",
+                    parameter="train_au_mean_percentage",
+                    expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+                    actual=train_au_percent
+                )
+        except Exception as e:
+            import pdb
+            pdb.set_trace()
+
 
     def check_checkpoint_files_in_code(self) -> Optional[Issue]:
         pass
@@ -956,6 +1010,7 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
                     message=f"Expected 5 training runs but found {num_runs}",
                     severity="error",
                 )
+
     def _run_time_mean(self, runs_timestamps : List[Tuple[datetime, datetime, BenchmarkRun]]) -> timedelta:
         sum = timedelta(seconds=0)
         n = 0
@@ -971,6 +1026,7 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
         # Keep a tuple with the start and end time of each run, how long it took and the run object.
         runs_timestamps : List[Tuple[datetime, datetime, BenchmarkRun]] = []
         for run in self.benchmark_runs:
+            self.logger.debug(f"Processing run {run.run_id}")
             if run.benchmark_result is not None:
                 run_start_str = run.benchmark_result.summary.get("start", None)
                 run_end_str = run.benchmark_result.summary.get("end", None)
@@ -1017,8 +1073,9 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
 
         # Sort the runs by start timestamp.
         runs_timestamps.sort(key=lambda run_ts: run_ts[0])
-        prev_end = None
-        for start, end, run in runs_timestamps:
+
+        prev_end = runs_timestamps[0][1]
+        for start, end, run in runs_timestamps[1:]:
             if prev_end is not None and start - prev_end > mean_run_time:
                 return Issue(
                             validation=PARAM_VALIDATION.INVALID,
@@ -1034,9 +1091,10 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
 
 class BenchmarkVerifier:
 
-    def __init__(self, *benchmark_runs, logger=None):
+    def __init__(self, *benchmark_runs, checks=None, logger=None):
         self.logger = logger
         self.issues = []
+        self.checks = checks
 
         if len(benchmark_runs) == 1:
             self.mode = "single"
@@ -1055,9 +1113,9 @@ class BenchmarkVerifier:
 
             benchmark_run = self.benchmark_runs[0]
             if benchmark_run.benchmark_type == BENCHMARK_TYPES.training:
-                self.rules_checker = TrainingRunRulesChecker(benchmark_run, logger)
+                self.rules_checker = TrainingRunRulesChecker(benchmark_run, logger, checks=self.checks)
             elif benchmark_run.benchmark_type == BENCHMARK_TYPES.checkpointing:
-                self.rules_checker = CheckpointingRunRulesChecker(benchmark_run, logger)
+                self.rules_checker = CheckpointingRunRulesChecker(benchmark_run, logger, checks=self.checks)
 
         elif self.mode == "multi":
             benchmark_types = {br.benchmark_type for br in benchmark_runs}
@@ -1067,16 +1125,16 @@ class BenchmarkVerifier:
                 benchmark_type = benchmark_types.pop()
 
             if benchmark_type == BENCHMARK_TYPES.training:
-                self.rules_checker = TrainingSubmissionRulesChecker(benchmark_runs, logger)
+                self.rules_checker = TrainingSubmissionRulesChecker(benchmark_runs, logger, checks=self.checks)
             if benchmark_type == BENCHMARK_TYPES.checkpointing:
-                self.rules_checker = CheckpointSubmissionRulesChecker(benchmark_runs, logger)
+                self.rules_checker = CheckpointSubmissionRulesChecker(benchmark_runs, logger, checks=self.checks)
 
     def verify(self) -> PARAM_VALIDATION:
         run_ids = [br.run_id for br in self.benchmark_runs]
         if self.mode == "single":
             self.logger.status(f"Verifying benchmark run for {run_ids[0]}")
         elif self.mode == "multi":
-            self.logger.status(f"Verifying benchmark runs for {', '.join(run_ids)}")
+            self.logger.status(f"Verifying benchmark runs for multiple runs including {run_ids[0]}")
         self.issues = self.rules_checker.run_checks()
         num_invalid = 0
         num_open = 0
@@ -1099,19 +1157,19 @@ class BenchmarkVerifier:
             self.benchmark_runs[0].issues = self.issues
 
         if num_invalid > 0:
-            self.logger.status(f'Benchmark run is INVALID due to {num_invalid} issues ({run_ids})')
+            self.logger.status(f'Benchmark run is INVALID due to {num_invalid} issues ({run_ids[0]})')
             if self.mode == "single":
                 self.benchmark_runs[0].category = PARAM_VALIDATION.INVALID
             return PARAM_VALIDATION.INVALID
         elif num_open > 0:
             if self.mode == "single":
                 self.benchmark_runs[0].category = PARAM_VALIDATION.OPEN
-            self.logger.status(f'Benchmark run qualifies for OPEN category ({run_ids})')
+            self.logger.status(f'Benchmark run qualifies for OPEN category ({run_ids[0]})')
             return PARAM_VALIDATION.OPEN
         else:
             if self.mode == "single":
                 self.benchmark_runs[0].category = PARAM_VALIDATION.CLOSED
-            self.logger.status(f'Benchmark run qualifies for CLOSED category ({run_ids})')
+            self.logger.status(f'Benchmark run qualifies for CLOSED category ({run_ids[0]})')
             return PARAM_VALIDATION.CLOSED
 
 

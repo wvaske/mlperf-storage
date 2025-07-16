@@ -168,11 +168,14 @@ def parse_reportgen_arguments():
     standard_args = parser.add_argument_group("Standard Arguments")
     standard_args.add_argument('--results-dir', '-rd', type=str, default=DEFAULT_RESULTS_DIR, help=help_messages['results_dir'])
     standard_args.add_argument('--output-dir', type=str, help=help_messages['output_dir'])
-    standard_args.add_argument('--config-file', '-c', type=str, help="Path to YAML file with argument overrides")
+    # standard_args.add_argument('--config-file', '-c', type=str, help="Path to YAML file with argument overrides")
     standard_args.add_argument('--verify-structure', '-vs', action="store_true", help="Verify the structure of the results directory")
     standard_args.add_argument("--metadata-only", "-mo", action="store_true", help="Only print metadata, not runs, issues or metrics")
     standard_args.add_argument("--no-print", "-np", action="store_true", help="Disable printing of the report output")
     standard_args.add_argument("--submitters", "-s", type=str, nargs='+', help="Submitters to limit results to")
+    standard_args.add_argument("--checks", "-c", type=str, nargs='+', help="Set of checks to run")
+    standard_args.add_argument("--models", type=str, nargs='+', help="Set of models to run")
+    standard_args.add_argument("--runs-only", action="store_true", help="Only verify individual runs, not the set of runs for a workload")
 
     output_control = parser.add_argument_group("Output Control")
     output_control.add_argument("--debug", action="store_true", help="Enable debug mode")
@@ -182,6 +185,7 @@ def parse_reportgen_arguments():
     view_only_args = parser.add_argument_group("View Only")
     view_only_args.add_argument("--what-if", action="store_true", help="View the configuration that would execute and "
                                                                        "the associated command.")
+    view_only_args.add_argument("--list-checks", action="store_true", help="List available checks")
     
     parsed_args = parser.parse_args()
 

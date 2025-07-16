@@ -43,6 +43,10 @@ class ReportGenerator:
             self.logger = setup_logging(name=f"mlpstorage_reporter")
             apply_logging_options(self.logger, args)
 
+        if self.args.list_checks:
+            self.print_checks()
+            sys.exit(EXIT_CODE.SUCCESS)
+
         self.results_dir = results_dir
         if not os.path.exists(self.results_dir):
             self.logger.error(f'Results directory {self.results_dir} does not exist')
@@ -54,6 +58,18 @@ class ReportGenerator:
 
         if not self.args.no_print:
             self.print_results()
+
+    def print_checks(self):
+        from mlpstorage.rules import TrainingRunRulesChecker, CheckpointingRunRulesChecker, TrainingSubmissionRulesChecker, CheckpointSubmissionRulesChecker
+
+        checks = dict()
+        for cls in TrainingRunRulesChecker, CheckpointingRunRulesChecker, TrainingSubmissionRulesChecker, CheckpointSubmissionRulesChecker:
+            checks[cls.__name__] = [item for item in dir(cls) if item.startswith('check_')]
+
+        for checker, checks in checks.items():
+            print("\nThe avilable checks for {checker}:")
+            for check in checks:
+                print(f'  - {check}')
 
     def generate_reports(self):
         # Verify the results directory exists:
@@ -74,12 +90,14 @@ class ReportGenerator:
         :return:
         """
         benchmark_runs = get_runs_files(self.results_dir, submitters=self.args.submitters, logger=self.logger)
+        if self.args.models:
+            benchmark_runs = [run for run in benchmark_runs if run.model in self.args.models]
 
         self.logger.info(f'Accumulating results from {len(benchmark_runs)} runs')
         # Process the individual runs and verify the logs against the rules
         for benchmark_run in benchmark_runs:
             self.logger.ridiculous(f'Processing run: \n{pprint.pformat(benchmark_run)}')
-            verifier = BenchmarkVerifier(benchmark_run, logger=self.logger)
+            verifier = BenchmarkVerifier(benchmark_run, logger=self.logger, checks=self.args.checks)
             category = verifier.verify()
             issues = verifier.issues
             result_dict = dict(
@@ -96,12 +114,14 @@ class ReportGenerator:
             )
             self.run_results[benchmark_run.run_id] = Result(**result_dict)
 
+        if self.args.runs_only:
+            return
+
         # Group runs per workload to run additional verifiers
         # These will be manually defined as these checks align with a specific submission version
         # I need to group by model. For training workloads we also group by accelerator but the same checker
         # is used based on model.
         workload_runs = dict()
-
         systems = set()
 
         # "workload_runs" will contain a list of BenchmarkRun objects grouped by model and accelerator
@@ -116,8 +136,8 @@ class ReportGenerator:
             submitter, system_name, model, accelerator = workload_key
             if not runs:
                 continue
-            self.logger.info(f'Running additional verifiers for model: {model}, accelerator: {accelerator}')
-            verifier = BenchmarkVerifier(*runs, logger=self.logger)
+            self.logger.info(f'Running verifiers for Submitter: {submitter}, system: {system_name}, model: {model}, accelerator: {accelerator}')
+            verifier = BenchmarkVerifier(*runs, logger=self.logger, checks=self.args.checks)
             category = verifier.verify()
             issues = verifier.issues
             result_dict = dict(
@@ -182,6 +202,9 @@ class ReportGenerator:
                                 print(f'\t\t- {metric}: {value}')
 
                     print("\n")
+
+        if self.args.runs_only:
+            return
 
         print("\n========================= Submissions Report =========================")
         print("This report represents aggregated runs of benchmarks for submissions")
