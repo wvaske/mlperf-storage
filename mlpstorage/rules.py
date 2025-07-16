@@ -5,7 +5,7 @@ import os
 import yaml
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pprint import pprint, pformat
 from statistics import mean
 from typing import List, Dict, Any, Optional, Tuple
@@ -856,13 +856,6 @@ class TrainingRunRulesChecker(RunRulesChecker):
     def check_num_epochs(self) -> Optional[Issue]:
         pass
 
-    def check_inter_test_times(self) -> Optional[Issue]:
-        # This can only operate on BenchmarkResults and not Benchmarks
-        # Check if the benchmark_run has the benchmark_result attribute
-        if not self.benchmark_run.benchmark_result:
-            return None
-        return None  # Placeholder for implementation
-
     def check_file_system_caching(self) -> Optional[Issue]:
         pass
 
@@ -946,6 +939,98 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
         """
         Require 5 runs for training benchmarks
         """
+
+        num_runs = 0
+        for run in self.benchmark_runs:
+            if run.benchmark_type == BENCHMARK_TYPES.training:
+                num_runs += 1
+
+        if num_runs == 5:
+            return Issue(
+                        validation=PARAM_VALIDATION.CLOSED,
+                        message="Found expected 5 benchmark runs.",
+                        severity="info",
+                    )
+        return Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Expected 5 training runs but found {num_runs}",
+                    severity="error",
+                )
+    def _run_time_mean(self, runs_timestamps : List[Tuple[datetime, datetime, BenchmarkRun]]) -> timedelta:
+        sum = timedelta(seconds=0)
+        n = 0
+        for start, end, _ in runs_timestamps:
+            sum = sum + (end - start)
+            n += 1
+        return sum / n
+
+    def check_inter_test_times(self) -> Optional[Issue]:
+        # This can only operate on BenchmarkResults and not Benchmarks
+        # Check if each benchmark_run has the benchmark_result attribute
+
+        # Keep a tuple with the start and end time of each run, how long it took and the run object.
+        runs_timestamps : List[Tuple[datetime, datetime, BenchmarkRun]] = []
+        for run in self.benchmark_runs:
+            if run.benchmark_result is not None:
+                run_start_str = run.benchmark_result.summary.get("start", None)
+                run_end_str = run.benchmark_result.summary.get("end", None)
+                if run_start_str is None:
+                    return Issue(
+                                validation=PARAM_VALIDATION.INVALID,
+                                message=f"Summary is missing start timestamp in run {run.run_id}.",
+                                severity="error",
+                            )
+                elif run_end_str is None:
+                    return Issue(
+                                validation=PARAM_VALIDATION.INVALID,
+                                message=f"Summary is missing end timestamp in run {run.run_id}.",
+                                severity="error",
+                            )
+                try:
+                    run_start = datetime.fromisoformat(run_start_str)
+                except:
+                    return Issue(
+                                validation=PARAM_VALIDATION.INVALID,
+                                message=f"Failed to parse start timestamp of run {run.run_id}.",
+                                severity="error",
+                            )
+                try:
+                    run_end = datetime.fromisoformat(run_end_str)
+                except:
+                    return Issue(
+                                validation=PARAM_VALIDATION.INVALID,
+                                message=f"Failed to parse end timestamp of run {run.run_id}.",
+                                severity="error",
+                            )
+                runs_timestamps.append((run_start, run_end, run))
+            else:
+                # If the BenchmarkRun object does not have a BenchmarkResult, this rule is impossible to verify
+                return Issue(
+                            validation=PARAM_VALIDATION.INVALID,
+                            message=f"Failed verify inter run times, benchmark {run.run_id} does not have results.",
+                            severity="error",
+                        )
+
+        # Compute the mean computation time of each run. This will be used to check against the time between each run.
+        # TODO (OMichaud0) This does not catch the case where someone might accept one bad long run in order to cherry-pick.
+        mean_run_time = self._run_time_mean(runs_timestamps)
+
+        # Sort the runs by start timestamp.
+        runs_timestamps.sort(key=lambda run_ts: run_ts[0])
+        prev_end = None
+        for start, end, run in runs_timestamps:
+            if prev_end is not None and start - prev_end > mean_run_time:
+                return Issue(
+                            validation=PARAM_VALIDATION.INVALID,
+                            message=f"Benchmark run {run.run_id} started too long after previous run",
+                            severity="error"
+                        )
+            prev_end = end
+        return Issue(
+                    validation=PARAM_VALIDATION.CLOSED,
+                    message=f"All runs were consecutive.",
+                    severity="info",
+                )
 
 class BenchmarkVerifier:
 
