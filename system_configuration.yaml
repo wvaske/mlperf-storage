@@ -14,6 +14,18 @@ System:
   max_random_read: # Optional - GiB/s
   max_random_write: # Optional - GiB/s
 
+  use_local_drives: bool
+  num_local_drives: # Cumulative number of drives in the solution
+  system_architecture: # Select one of:
+    - direct-attached media
+    - remotely-attached block
+    - shared filesystem using standard access protocol
+    - shared filesystem using proprietary access protocol
+    - Object
+    - Cloud
+    - Other
+  useable_capacity: # Capacity in TB
+
 PowerRequirements:
   dlio_client:
     quantity: # number of dlio_client nodes

@@ -1018,9 +1018,108 @@ class CheckpointingRunRulesChecker(RunRulesChecker):
         :return:
         """
         closed_allowed_params = ['checkpoint.checkpoint_folder', 'checkpoint.mode', 'checkpoint.num_checkpoints_read',
-                                 'checkpoint.num_checkpoints_write']
+                                 'checkpoint.num_checkpoints_write', 'model.parallelism.data']
         open_allowed_params = []
         issues = self._check_allowed_params(closed_allowed_params, open_allowed_params)
+        return issues
+
+    def check_clear_cache_requirement(self):
+        # The filesystem cache needs to be cleared before reads if memory is > 3x the checkpoint size
+        issues = []
+
+        # Get total memory size and amount of data in fileystem cache
+        # Compare to size of checkpoint based on num_processes and LLM_SIZE_BY_RANK
+        # Some host have a smaller checkpoint responsiblity so we need to look at the minimum
+        model = self.benchmark_run.model
+        num_processes = self.benchmark_run.benchmark_result.summary['num_accelerators']
+        num_hosts = self.benchmark_run.benchmark_result.summary['num_hosts']
+        host_mem_sizes = self.benchmark_run.benchmark_result.summary['host_memory_GB']
+        per_rank_gb = calculate_checkpointing_size(model, num_processes, self.logger)
+
+        # We're assuming round-robin rank placement. The first ranks will need more memory but they should
+        # be distributed across all hosts
+        # We'll create a map of hosts and a list of ranks to accumulate the memory requirements per host
+        host_data = {i: {'total_mem': host_mem_sizes[i], 'rank_indexes': list(), 'total_checkpoint_gb': 0} for i in range(num_hosts)}
+
+        for i, rank_gb in enumerate(per_rank_gb):
+            host = i % num_hosts
+            host_data[host]['rank_indexes'].append(i)
+            host_data[host]['total_checkpoint_gb'] += per_rank_gb[i]
+
+        for host, data in host_data.items():
+            data['dataset_mem_multiplier'] = data['total_mem'] / data['total_checkpoint_gb']
+            if data['total_mem'] > 3 * data['total_checkpoint_gb']:
+                host_data[host]['clear_cache_required'] = True
+            else:
+                host_data[host]['clear_cache_required'] = False
+
+        clear_cache_required = any({data['clear_cache_required'] for data in host_data.values()})
+
+        num_reads = self.benchmark_run.parameters.get('checkpoint', {}).get('num_checkpoints_read', 0)
+        num_writes = self.benchmark_run.parameters.get('checkpoint', {}).get('num_checkpoints_write', 0)
+        if num_reads > 0 and num_writes > 0:
+            if clear_cache_required:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.INVALID,
+                    message=f"Checkpointing reads and writes must be separated with caches cleared before reads",
+                    parameter="checkpoint with separate reads and writes",
+                    expected=True,
+                    actual=False
+                ))
+            if not clear_cache_required:
+                issues.append(Issue(
+                    validation=PARAM_VALIDATION.CLOSED,
+                    message=f"Checkpointing reads and writes can be run as a combined run without clearing caches",
+                    parameter="checkpoint with separate reads and writes",
+                    expected=False,
+                    actual=False
+                ))
+
+        elif num_reads >= 1:
+            # We need to verify cache was cleared if required
+            filesystem_cache_size_kB = int(self.benchmark_run.benchmark_result.summary['host_meminfo']['Cached'].split()[0])
+            filesystem_cache_size_GB = filesystem_cache_size_kB / 1024 / 1024
+
+            if clear_cache_required and filesystem_cache_size_GB > 3 * host_data[0]['total_checkpoint_gb']:
+                issues.append(
+                    Issue(
+                        validation=PARAM_VALIDATION.INVALID,
+                        message=f"Filesystem cache was not cleared before read operations.",
+                        parameter="filesystem_cache_size_GB",
+                        expected=f"<= {3 * host_data[0]['total_checkpoint_gb']:.1f} GB",
+                        actual=f"{filesystem_cache_size_GB:.2f} GB",
+                    )
+                )
+            elif clear_cache_required and filesystem_cache_size_GB <= 3 * host_data[0]['total_checkpoint_gb']:
+                issues.append(
+                    Issue(
+                        validation=PARAM_VALIDATION.CLOSED,
+                        message=f"Filesystem cache was cleared before read operations.",
+                        parameter="filesystem_cache_size_GB",
+                        expected=f"<= {3 * host_data[0]['total_checkpoint_gb']:.1f} GB",
+                        actual=f"{filesystem_cache_size_GB:.2f} GB"
+                    )
+                )
+            elif not clear_cache_required:
+                issues.append(
+                    Issue(
+                        validation=PARAM_VALIDATION.CLOSED,
+                        message=f"Clearing cache not required before read operations",
+                        parameter="memory_capacity_to_dataset_size",
+                        expected=f"<= {3 * host_data[0]['total_checkpoint_gb']:.1f} GB",
+                        actual=f"{host_mem_sizes[0]:.2f} GB"
+                    )
+                )
+        elif num_writes >= 1:
+            issues.append(
+                Issue(
+                    validation=PARAM_VALIDATION.CLOSED,
+                    message=f"Filesystem cache clearing not required for write operations.",
+                    parameter="clear_filesystem_cahe",
+                    expected=None,
+                    actual=None
+                )
+            )
         return issues
 
 

@@ -175,7 +175,7 @@ def parse_reportgen_arguments():
     standard_args.add_argument("--submitters", "-s", type=str, nargs='+', help="Submitters to limit results to")
     standard_args.add_argument("--checks", "-c", type=str, nargs='+', help="Set of checks to run")
     standard_args.add_argument("--models", type=str, nargs='+', help="Set of models to run")
-    standard_args.add_argument("--runs-only", action="store_true", help="Only verify individual runs, not the set of runs for a workload")
+    standard_args.add_argument("--runs-only", "-ro", action="store_true", help="Only verify individual runs, not the set of runs for a workload")
 
     output_control = parser.add_argument_group("Output Control")
     output_control.add_argument("--debug", action="store_true", help="Enable debug mode")
