@@ -51,7 +51,9 @@ class ReportGenerator:
         self.run_results = dict()           # {run_id : result_dict }
         self.workload_results = dict()      # {(model) | (model, accelerator) : result_dict }
         self.accumulate_results()
-        self.print_results()
+
+        if not self.args.no_print:
+            self.print_results()
 
     def generate_reports(self):
         # Verify the results directory exists:
@@ -71,7 +73,7 @@ class ReportGenerator:
         If summary.json files does not exist, set status=Failed and only use data from metadata.json the run_info from the result_files dictionary
         :return:
         """
-        benchmark_runs = get_runs_files(self.results_dir, logger=self.logger)
+        benchmark_runs = get_runs_files(self.results_dir, submitters=self.args.submitters, logger=self.logger)
 
         self.logger.info(f'Accumulating results from {len(benchmark_runs)} runs')
         # Process the individual runs and verify the logs against the rules
@@ -100,12 +102,15 @@ class ReportGenerator:
         # is used based on model.
         workload_runs = dict()
 
+        systems = set()
+
         # "workload_runs" will contain a list of BenchmarkRun objects grouped by model and accelerator
         for benchmark_run in benchmark_runs:
             workload_key = (benchmark_run.submitter, benchmark_run.system_name, benchmark_run.model, benchmark_run.accelerator)
             if workload_key not in workload_runs.keys():
                 workload_runs[workload_key] = []
             workload_runs[workload_key].append(benchmark_run)
+            systems.add(benchmark_run.system_name)
 
         for workload_key, runs in workload_runs.items():
             submitter, system_name, model, accelerator = workload_key
@@ -132,6 +137,8 @@ class ReportGenerator:
                 result_dict["metrics"] = runs[0].metrics
 
             self.workload_results[workload_key] = Result(**result_dict)
+
+        self.logger.result(f'Found {len(workload_runs)} workloads across {len(systems)} systems')
 
     def print_results(self):
         print("\n========================= Results Report =========================")

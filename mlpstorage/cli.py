@@ -171,6 +171,8 @@ def parse_reportgen_arguments():
     standard_args.add_argument('--config-file', '-c', type=str, help="Path to YAML file with argument overrides")
     standard_args.add_argument('--verify-structure', '-vs', action="store_true", help="Verify the structure of the results directory")
     standard_args.add_argument("--metadata-only", "-mo", action="store_true", help="Only print metadata, not runs, issues or metrics")
+    standard_args.add_argument("--no-print", "-np", action="store_true", help="Disable printing of the report output")
+    standard_args.add_argument("--submitters", "-s", type=str, nargs='+', help="Submitters to limit results to")
 
     output_control = parser.add_argument_group("Output Control")
     output_control.add_argument("--debug", action="store_true", help="Enable debug mode")

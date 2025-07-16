@@ -1191,7 +1191,7 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs):
     return output_location
 
 
-def get_runs_files(results_dir, logger=None):
+def get_runs_files(results_dir, submitters=None, logger=None):
     """
     Walk the results_dir location and return a list of BenchmarkResult objects that represent a single run
 
@@ -1210,7 +1210,11 @@ def get_runs_files(results_dir, logger=None):
     runs = []
 
     # Walk through all directories and files in results_dir
-    for root, dirs, files in os.walk(results_dir):
+    for root, dirs, files in os.walk(results_dir, topdown=True):
+        # If we in the top directory and we have a list of submitters passed, only consider runs from those subdirectories
+        if root == results_dir and submitters:
+            dirs[:] = [d for d in dirs if d in submitters]
+
         logger.ridiculous(f'Processing directory: {root}')
 
         # Look for metadata files
