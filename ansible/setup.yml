@@ -33,6 +33,13 @@
     - name: DEBIAN | Install OS-specific system dependencies
       when: ansible_os_family == 'Debian'
       block:
+        - name: DEBIAN | Remove Open MPI
+          ansible.builtin.package:
+            state: absent
+            name:
+              - libopenmpi-dev
+              - openmpi-bin 
+              - openmpi-common
         - name: DEBIAN | Install Python and MPI packages
           ansible.builtin.package:
             name:
@@ -42,6 +49,12 @@
     - name: RHEL | Install OS-specific system dependencies
       when: ansible_os_family == 'RedHat'
       block:
+        - name: RHEL | Remove Open MPI
+          ansible.builtin.package:
+            state: absent
+            name:
+              - openmpi-devel       
+              - openmpi
         - name: RHEL | Install Python and MPI packages
           ansible.builtin.package:
             name:
@@ -62,6 +75,12 @@
     - name: SLES | Install OS-specific system dependencies
       when: ansible_os_family == 'Suse'
       block:
+        - name: SLES | Remove Open MPI
+          ansible.builtin.package:
+            state: absent
+            name:
+              - openmpi-devel
+              - openmpi
         - name: SLES | Install base system packages
           ansible.builtin.package:
             name:
