@@ -1283,7 +1283,13 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
         if num_runs == 5:
             return Issue(
                         validation=PARAM_VALIDATION.CLOSED,
-                        message="Found expected 5 benchmark runs.",
+                        message="Found expected 5 benchmark runs with no warmup run.",
+                        severity="info",
+                    )
+        elif num_runs == 6:
+            return Issue(
+                        validation=PARAM_VALIDATION.CLOSED,
+                        message="Found expected 5 benchmark runs with 1 warmup run.",
                         severity="info",
                     )
         return Issue(
