@@ -30,7 +30,7 @@
     - [11.2 What to submit - OPEN submissions](#112-what-to-submit---open-submissions)
     - [11.3 Directory Structure for CLOSED or OPEN Submissions](#113-directory-structure-for-closed-or-open-submissions)
     - [11.4 System Description](#114-system-description)
-      - [11.4.1 System Description JSON](#1141-system-description-json)
+      - [11.4.1 System Description YAML](#1141-system-description-yaml)
       - [11.4.2 System Description PDF](#1142-system-description-pdf)
   - [12. Review](#12-review)
     - [12.1 Visibility of results and code during review](#121-visibility-of-results-and-code-during-review)
@@ -573,7 +573,7 @@ A complete submission for one workload (3D-Unet, ResNet, or Cosmoflow) contains 
    - The logs from the benchmark runs, but only from the rank0 systems not all of the systems.
    - The logs from the dataset generation step that built the files that this benchmark run read from.
 2. **systems** folder, containing:
-   - ``<system-name>.json``
+   - ``<system-name>.yaml``
    - ``<system-name>.pdf``
    - For system naming examples look [here](https://github.com/mlcommons/storage_results_v0.5/tree/main/closed) in the ``results/closed`` subdirectory below each submitter's directory.
 3. **code** folder, containing:
@@ -774,7 +774,7 @@ The fields in the example document are required unless otherwise called out. Of 
 
 #### 11.4.2 System Description PDF
 
-The goal of the pdf is to complement the JSON file, providing additional detail on the system to enable full reproduction by a third party. We encourage submitters to add details that are more easily captured by diagrams and text description, rather than a JSON.
+The goal of the pdf is to complement the YAML file, providing additional detail on the system to enable full reproduction by a third party. We encourage submitters to add details that are more easily captured by diagrams and text description, rather than a YAML.
 
 This file is should include everything that a third party would need in order to recreate the results in the submission, including product model numbers or hardware config details, unit counts of drives and/or components, system and network topologies, software used with version numbers, and any non-default configuration options used by any of the above.
 
@@ -845,7 +845,7 @@ The following *recommended* structure of systems.pdf provides a starting point f
 If the submission is for a commercial system, a pdf of the product spec document can add significant value.  If it is a system that does not have a spec document (e.g., a research system, HPC etc), or the product spec pdf doesn’t include all the required detail, the document can contain (all these are optional):
 
 - Recommended: High-level system diagram e.g., showing the ``host node``(s), storage system main components, and network topology used when connecting everything (e.g., spine-and-leaf, butterfly, etc.), and any non-default configuration options that were set during the benchmark run.
-- Optional: Additional text description of the system, if the information is not captured in the JSON, e.g., the storage system’s components (make and model, optional features, capabilities, etc) and all configuration settings that are relevant to ML/AI benchmarks.  If the make/model doesn’t specify all the components of the hardware platform it is running on, eg: it’s an Software-Defined-Storage product, then those should be included here (just like the client component list).
+- Optional: Additional text description of the system, if the information is not captured in the YAML, e.g., the storage system’s components (make and model, optional features, capabilities, etc) and all configuration settings that are relevant to ML/AI benchmarks.  If the make/model doesn’t specify all the components of the hardware platform it is running on, eg: it’s an Software-Defined-Storage product, then those should be included here (just like the client component list).
 - Optional: We recommended the following three categories for the text description:
   1. Software, 
   2. Hardware, and
