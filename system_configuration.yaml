@@ -14,6 +14,26 @@ System:
   max_random_read: # Optional - GiB/s
   max_random_write: # Optional - GiB/s
 
+  # The following will be used to generate the "integrated client storage" and "# Clients with local storage" in the
+  # results table.
+  # f"Integrated client storage: {num_local_drives}x {integrated_client_storage}"
+  use_local_drives: bool
+  num_local_drives: 16                         # Cumulative number of drives in the solution
+  integrated_client_storage: 8TB NVMe          # Describe the storage present in client nodes for the solution
+  num_clients_with_integrated_storage: 8       # Number of clients with integrated storage
+
+  # The following will map to the "Storage System Type" column in the results table. If "use_local_drives" is True,
+  #   then "Local File + " will be prepended to the storage type
+  system_architecture: # Select one of:
+    - direct-attached media                                 # Direct-Attached Block
+    - remotely-attached block                               # Fabric-Attached Block
+    - shared filesystem using standard access protocol      # Shared File
+    - shared filesystem using proprietary access protocol   # Shared File
+    - Object                                                # Object
+    - Cloud                                                 # Cloud
+    - Other                                                 # Error if we get an "Other"
+  useable_capacity:  # Capacity in TB that is usable for the storage system. If no unit is provided, assume TB (not TiB)
+
 PowerRequirements:
   dlio_client:
     quantity: # number of dlio_client nodes
