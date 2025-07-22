@@ -91,7 +91,8 @@ class ReportGenerator:
         If summary.json files does not exist, set status=Failed and only use data from metadata.json the run_info from the result_files dictionary
         :return:
         """
-        benchmark_runs = get_runs_files(self.results_dir, submitters=self.args.submitters, logger=self.logger)
+        benchmark_runs = get_runs_files(self.results_dir, submitters=self.args.submitters,
+                                        exclude=self.args.exclude_submitters, logger=self.logger)
         if self.args.models:
             benchmark_runs = [run for run in benchmark_runs if run.model in self.args.models]
 
@@ -147,7 +148,8 @@ class ReportGenerator:
             if not runs:
                 continue
             self.logger.info(f'Running verifiers for Submitter: {submitter}, system: {system_name}, model: {model}, accelerator: {accelerator}')
-            verifier = BenchmarkVerifier(*runs, logger=self.logger, checks=self.args.checks)
+            self.logger.debug(f'Workload runs: {pprint.pformat(runs)}')
+            verifier = BenchmarkVerifier(runs, logger=self.logger, checks=self.args.checks)
             category = verifier.verify()
             issues = verifier.issues
             result_dict = dict(
@@ -162,7 +164,7 @@ class ReportGenerator:
                 category=category,
             )
             if len(runs) > 1:
-                result_dict["metrics"] = aggregate_run_metrics([run.metrics for run in runs], agg_funcs=[mean,])
+                result_dict["metrics"] = aggregate_run_metrics([run.metrics for run in runs], agg_funcs=[mean, set])
             elif len(runs) == 1:
                 result_dict["metrics"] = runs[0].metrics
 
@@ -265,7 +267,12 @@ class ReportGenerator:
                                 for issue in workload_result.issues:
                                     print(f'\t\t- {issue}')
                             else:
-                                print(f'\t\t- No issues found')
+                                print(f'\t\t- No workload issues found')
+
+                            for benchmark_run in workload_result.benchmark_run:
+                                for issue in benchmark_run.issues:
+                                    if issue.validation == PARAM_VALIDATION.INVALID:
+                                        print(f'\t\t- {issue} ({benchmark_run.run_id})')
 
                             if workload_result.metrics:
                                 print(f'\t    Metrics:')
@@ -286,6 +293,8 @@ class ReportGenerator:
                             print("\n")
 
         print("\n========================= Submitter Overview Report =========================")
+        grand_total_workloads = {cat: 0 for cat in CATEGORIES}
+        grand_total_runs = {cat: 0 for cat in CATEGORIES}
         for submitter, overview in self.submitter_overview.items():
             print(f"\n------------------------- {submitter} Report -------------------------")
             total_workloads = {cat: 0 for cat in CATEGORIES}
@@ -296,12 +305,18 @@ class ReportGenerator:
                     counts = category_count.get(category, {"num_workloads": 0, "num_runs": 0})
                     total_workloads[category] += counts["num_workloads"]
                     total_runs[category] += counts["num_runs"]
+                    grand_total_workloads[category] += counts["num_workloads"]
+                    grand_total_runs[category] += counts["num_runs"]
                     print(f'\t    {category.upper()} Workloads:\t{counts["num_workloads"]}    (Runs: {counts["num_runs"]})')
                 print()
 
             for cat in CATEGORIES:
                 print(f'\nTotal {cat.upper()} Workloads: {total_workloads[cat]}    ')
                 print(f'Total {cat.upper()} Runs: {total_runs[cat]}')
+
+        for cat in CATEGORIES:
+            print(f'\nGrand Total {cat.upper()} Workloads: {grand_total_workloads[cat]}    ')
+            print(f'Grand Total {cat.upper()} Runs: {grand_total_runs[cat]}')
 
     def write_json_file(self, results):
         json_file = os.path.join(self.results_dir,'results.json')

@@ -652,7 +652,7 @@ class RulesChecker(abc.ABC):
 
         if self.selected_checks:
             self.check_methods = [method for method in self.check_methods if method.__name__ in self.selected_checks]
-            self.logger.debug(f"Selected checks: {self.selected_checks}")
+            self.logger.debug(f"Selected checks: {self.selected_checks} on {self.__class__.__name__} instance")
         
     def run_checks(self) -> List[Issue]:
         """Run all check methods and return a list of issues"""
@@ -805,7 +805,7 @@ class TrainingRunRulesChecker(RunRulesChecker):
         reader_params = self.benchmark_run.parameters['reader']
         required_num_files, _, _ = calculate_training_data_size(None, self.benchmark_run.system_info, dataset_params, reader_params, self.logger, self.benchmark_run.num_processes)
 
-        if configured_num_files < required_num_files:
+        if configured_num_files < (required_num_files * .99):
             return Issue(
                 validation=PARAM_VALIDATION.INVALID,
                 message=f"Insufficient number of training files",
@@ -821,7 +821,7 @@ class TrainingRunRulesChecker(RunRulesChecker):
                 expected=f">= {required_num_files}",
                 actual=configured_num_files
             )
-        elif configured_num_files > required_num_files:
+        elif configured_num_files > ( required_num_files * .99):
             return Issue(
                 validation=PARAM_VALIDATION.CLOSED,
                 message=f"Number of training files is more than required number",
@@ -899,7 +899,7 @@ class TrainingRunRulesChecker(RunRulesChecker):
             if train_au_percent < AU_REQUIREMENT[self.benchmark_run.model]:
                 return Issue(
                     validation=PARAM_VALIDATION.INVALID,
-                    message=f"Training AU mean percentage is below 90%, model: {self.benchmark_run.model}",
+                    message=f"Training AU mean percentage is below {AU_REQUIREMENT[self.benchmark_run.model]}%, model: {self.benchmark_run.model}",
                     parameter="train_au_mean_percentage",
                     expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
                     actual=train_au_percent
@@ -907,7 +907,7 @@ class TrainingRunRulesChecker(RunRulesChecker):
             else:
                 return Issue(
                     validation=PARAM_VALIDATION.CLOSED,
-                    message=f"Training AU mean percentage is 90% or above, model: {self.benchmark_run.model}",
+                    message=f"Training AU mean percentage is {AU_REQUIREMENT[self.benchmark_run.model]}% or above, model: {self.benchmark_run.model}",
                     parameter="train_au_mean_percentage",
                     expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
                     actual=train_au_percent
@@ -916,6 +916,91 @@ class TrainingRunRulesChecker(RunRulesChecker):
             import pdb
             pdb.set_trace()
 
+    def check_au_calculation(self):
+        issues = []
+        train_au_percent = self.benchmark_run.metrics.get('train_au_mean_percentage')
+        train_mean_samples_per_second = self.benchmark_run.benchmark_result.summary['metric'].get("train_throughput_mean_samples_per_second")
+        num_accelerators = self.benchmark_run.benchmark_result.summary['num_accelerators']
+        sps_per_accelerator = train_mean_samples_per_second / num_accelerators
+
+        # Ideal AU comes from batch size, compute time
+        workload_config = self.benchmark_run.benchmark_result.hydra_configs['config.yaml']['workload']
+        compute_time = workload_config['train']['computation_time']
+        batch_size = workload_config['reader']['batch_size']
+
+        idea_samples_per_second = batch_size / compute_time
+        min_samples_per_second = idea_samples_per_second * AU_REQUIREMENT[self.benchmark_run.model] / 100
+
+        # how close does it need to be? half a percent
+        closeness_factor = 0.995
+
+        calculated_au_percent = (sps_per_accelerator / idea_samples_per_second * 100)
+        if calculated_au_percent < (AU_REQUIREMENT[self.benchmark_run.model] * closeness_factor):
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"The calculated AU (from samples per second) is below the threshold",
+                parameter="calculated_au_mean_percentage",
+                expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+                actual=f"{calculated_au_percent:.2f}%",
+            ))
+        else:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.CLOSED,
+                message=f"The calculated AU (from samples per second) meets the threshold",
+                parameter="calculated_au_mean_percentage",
+                expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+                actual=f"{calculated_au_percent:.2f}%",
+            ))
+
+        if abs(calculated_au_percent - train_au_percent) > (1 - closeness_factor) * 100:
+            difference = (calculated_au_percent - train_au_percent) / train_au_percent * 100
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Calculated AU (from samples per second) is {difference:0.1f}% different from the training AU mean percentage",
+                parameter="calculated_au_mean_percentage",
+                expected=f"{train_au_percent:.2f}%",
+                actual=f"{calculated_au_percent:.2f}%",
+            ))
+        else:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.CLOSED,
+                message=f"Calculated AU (from samples per second) is the same as the training AU mean percentage",
+                parameter="calculated_au_mean_percentage",
+                expected=f"{train_au_percent:.2f}%",
+                actual=f"{calculated_au_percent:.2f}%",
+            ))
+
+        # if sps_per_accelerator < (min_samples_per_second * closeness_factor):
+        #     issues.append(Issue(
+        #         validation=PARAM_VALIDATION.INVALID,
+        #         message=f"Training throughput is below {AU_REQUIREMENT[self.benchmark_run.model]}% per second, model: {self.benchmark_run.model}",
+        #         parameter="train_throughput_mean_samples_per_second",
+        #         expected=f">= {min_samples_per_second}",
+        #         actual=sps_per_accelerator
+        #     ))
+        #     issues.append(Issue(
+        #         validation=PARAM_VALIDATION.INVALID,
+        #         message=f"The calculated AU (from samples per second) of ",
+        #         parameter="calculated_au_mean_percentage",
+        #         expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+        #         actual=(sps_per_accelerator / idea_samples_per_second * 100)
+        #     ))
+        # else:
+        #     issues.append(Issue(
+        #         validation=PARAM_VALIDATION.CLOSED,
+        #         message=f"Training throughput is {AU_REQUIREMENT[self.benchmark_run.model]}% per second or above, model: {self.benchmark_run.model}",
+        #         parameter="train_throughput_mean_samples_per_second",
+        #         expected=f">= {min_samples_per_second}",
+        #         actual=sps_per_accelerator
+        #     ))
+        #     issues.append(Issue(
+        #         validation=PARAM_VALIDATION.CLOSED,
+        #         message=f"Training throughput is below {AU_REQUIREMENT[self.benchmark_run.model]}% per second, model: {self.benchmark_run.model}",
+        #         parameter="calculated_au_mean_percentage",
+        #         expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+        #         actual=(sps_per_accelerator / idea_samples_per_second * 100)
+        #     ))
+        return issues
 
     def check_checkpoint_files_in_code(self) -> Optional[Issue]:
         pass
@@ -1053,6 +1138,8 @@ class CheckpointingRunRulesChecker(RunRulesChecker):
             else:
                 host_data[host]['clear_cache_required'] = False
 
+        self.logger.info(f'RunID: {self.benchmark_run.run_id}: Checkpoint on Host0: {host_data[0]["total_checkpoint_gb"]}, Total Memon Host0: {host_data[0]["total_mem"]}')
+
         clear_cache_required = any({data['clear_cache_required'] for data in host_data.values()})
 
         num_reads = self.benchmark_run.parameters.get('checkpoint', {}).get('num_checkpoints_read', 0)
@@ -1063,16 +1150,16 @@ class CheckpointingRunRulesChecker(RunRulesChecker):
                     validation=PARAM_VALIDATION.INVALID,
                     message=f"Checkpointing reads and writes must be separated with caches cleared before reads",
                     parameter="checkpoint with separate reads and writes",
-                    expected=True,
-                    actual=False
+                    expected=f"Memory < {3 * host_data[0]['total_checkpoint_gb']:.1f} GB",
+                    actual=f"Memory == {host_data[0]['total_mem']}"
                 ))
             if not clear_cache_required:
                 issues.append(Issue(
                     validation=PARAM_VALIDATION.CLOSED,
                     message=f"Checkpointing reads and writes can be run as a combined run without clearing caches",
                     parameter="checkpoint with separate reads and writes",
-                    expected=False,
-                    actual=False
+                    expected=f"Memory < {3 * host_data[0]['total_checkpoint_gb']:.1f} GB",
+                    actual=f"Memory == {host_data[0]['total_mem']}"
                 ))
 
         elif num_reads >= 1:
@@ -1286,6 +1373,7 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
                         message="Found expected 5 benchmark runs.",
                         severity="info",
                     )
+
         return Issue(
                     validation=PARAM_VALIDATION.INVALID,
                     message=f"Expected 5 training runs but found {num_runs}",
@@ -1381,25 +1469,24 @@ class TrainingSubmissionRulesChecker(MultiRunRulesChecker):
 
 class BenchmarkVerifier:
 
-    def __init__(self, *benchmark_runs, checks=None, logger=None):
+    def __init__(self, benchmark_runs, checks=None, logger=None):
         self.logger = logger
         self.issues = []
         self.checks = checks
 
-        if len(benchmark_runs) == 1:
-            self.mode = "single"
-        elif len(benchmark_runs) > 1:
+        if isinstance(benchmark_runs, list):
             self.mode = "multi"
+            self.benchmark_runs = benchmark_runs
         else:
-            raise ValueError("At least one benchmark run is required")
+            self.mode = "single"
+            self.benchmark_runs = [benchmark_runs, ]
 
-        self.benchmark_runs = benchmark_runs
         if self.mode == "single":
-            if "mlpstorage.benchmarks." in str(type(benchmark_runs[0])):
+            if "mlpstorage.benchmarks." in str(type(self.benchmark_runs[0])):
                 # This is here if we get a Benchmark instance that needs to run the verifier
                 # on itself before execution. We map it to a BenchmarkRun instance
                 # We check against the string so we don't need to import the Benchmark classes here
-                self.benchmark_runs = [BenchmarkRun(benchmark_instance=benchmark_runs[0], logger=logger)]
+                self.benchmark_runs = [BenchmarkRun(benchmark_instance=self.benchmark_runs[0], logger=logger)]
 
             benchmark_run = self.benchmark_runs[0]
             if benchmark_run.benchmark_type == BENCHMARK_TYPES.training:
@@ -1408,7 +1495,7 @@ class BenchmarkVerifier:
                 self.rules_checker = CheckpointingRunRulesChecker(benchmark_run, logger, checks=self.checks)
 
         elif self.mode == "multi":
-            benchmark_types = {br.benchmark_type for br in benchmark_runs}
+            benchmark_types = {br.benchmark_type for br in self.benchmark_runs}
             if len(benchmark_types) > 1:
                 raise ValueError("Multi-run verification requires all runs are from the same benchmark type. Got types: {benchmark_types}")
             else:
@@ -1653,7 +1740,7 @@ def generate_output_location(benchmark, datetime_str=None, **kwargs):
     return output_location
 
 
-def get_runs_files(results_dir, submitters=None, logger=None):
+def get_runs_files(results_dir, submitters=None, exclude=None, logger=None):
     """
     Walk the results_dir location and return a list of BenchmarkResult objects that represent a single run
 
@@ -1676,6 +1763,8 @@ def get_runs_files(results_dir, submitters=None, logger=None):
         # If we in the top directory and we have a list of submitters passed, only consider runs from those subdirectories
         if root == results_dir and submitters:
             dirs[:] = [d for d in dirs if d in submitters]
+        if root == results_dir and exclude:
+            dirs[:] = [d for d in dirs if d not in exclude]
 
         logger.ridiculous(f'Processing directory: {root}')
 
