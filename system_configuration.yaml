@@ -17,7 +17,7 @@ System:
   # The following will be used to generate the "integrated client storage" and "# Clients with local storage" in the
   # results table.
   use_local_storage: bool
-  integrated_client_storage: 2x 8TB NVMe per Node  # Describe the storage present PER NODE in client nodes for the solution
+  integrated_client_storage: 16x 8TB NVMe          # Describe the cumulative integrated client storage for the solution
   num_clients_with_integrated_storage: 8           # Number of clients with integrated storage
 
   # The following will map to the "Storage System Type" column in the results table. If "use_local_drives" is True,
