@@ -486,7 +486,7 @@ def update_args(args):
         flattened_params = [item for sublist in args.params for item in sublist]
         setattr(args, 'params', flattened_params)
 
-    if args.mpi_params:
+    if hasattr(args, 'mpi_params'):
         flattened_mpi_params = [item for sublist in args.mpi_params for item in sublist]
         setattr(args,'mpi_params', flattened_mpi_params)
 

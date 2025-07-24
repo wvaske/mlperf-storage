@@ -102,10 +102,31 @@ def log_level_factory(level_name):
     return log_func
 
 
+class MLPSLogger(logging.Logger):
+    def _log(self, level, msg, args, color=None, exc_info=None, extra=None, stack_info=False, stacklevel=3):
+        # This is kind of annoying, the following code is just copy-pasted from logging\__init_.py. If we call
+        #   super()._log() the `self.findCaller()` doesn't work properly and will always return the line in this
+        #   file that called self._log(). The easy solution is to override the entire logging._log by copy pasting
+        #   the functionality here. I'm open to better solutions than this.
+        sinfo = None
+        fn, lno, func, sinfo = self.findCaller(stack_info, stacklevel)
+        # print(f'Level 1: {self.findCaller(stack_info, 1)}')
+        # print(f'Level 2: {self.findCaller(stack_info, 2)}')
+        # print(f'Level 3: {self.findCaller(stack_info, 3)}')
+        if exc_info:
+            if isinstance(exc_info, BaseException):
+                exc_info = (type(exc_info), exc_info, exc_info.__traceback__)
+            elif not isinstance(exc_info, tuple):
+                exc_info = sys.exc_info()
+
+        record = self.makeRecord(self.name, level, fn, lno, msg, args, exc_info, func, extra, sinfo)
+        self.handle(record)
+
+
 # Add the custom levels to the logger
 for custom_name, custom_num in custom_levels.items():
     logging.addLevelName(custom_num, custom_name)
-    setattr(logging.Logger, custom_name.lower(), log_level_factory(custom_name))
+    setattr(MLPSLogger, custom_name.lower(), log_level_factory(custom_name))
 
 
 class ColoredStandardFormatter(logging.Formatter):
@@ -127,7 +148,7 @@ def setup_logging(name=__name__, stream_log_level=DEFAULT_STREAM_LOG_LEVEL):
     if isinstance(stream_log_level, str):
         stream_log_level = logging.getLevelName(stream_log_level.upper())
 
-    _logger = logging.getLogger(name)
+    _logger = MLPSLogger(name)
     _logger.setLevel(logging.DEBUG)
 
     stream_handler = logging.StreamHandler()
@@ -145,10 +166,6 @@ def apply_logging_options(_logger, args):
     stream_handlers = [h for h in _logger.handlers if not hasattr(h, 'baseFilename')]
     log_levels = sorted([v for k, v in sys.modules[__name__].__dict__.items() if type(v) is int])
 
-    if hasattr(args, "stream_log_level") and args.stream_log_level:
-        for stream_handler in stream_handlers:
-            stream_handler.setLevel(args.stream_log_level.upper())
-
     if hasattr(args, "verbose") and args.verbose:
         for stream_handler in stream_handlers:
             if stream_handler.level > VERBOSE:
@@ -159,3 +176,7 @@ def apply_logging_options(_logger, args):
             stream_handler.setFormatter(ColoredDebugFormatter())
             if stream_handler.level > DEBUG:
                 stream_handler.setLevel(DEBUG)
+
+    if hasattr(args, "stream_log_level") and args.stream_log_level:
+        for stream_handler in stream_handlers:
+            stream_handler.setLevel(args.stream_log_level.upper())

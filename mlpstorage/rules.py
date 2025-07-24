@@ -254,6 +254,9 @@ class BenchmarkResult:
         self.logger = logger
         self.metadata = None
         self.summary = None
+        self.system_description = None
+        self.system_description_error = None
+        self.expected_system_description_yaml_path = None
         self.hydra_configs = {}
         self.per_rank_per_epoch_stats = {}
         self.per_rank_outputs = {}
@@ -277,6 +280,7 @@ class BenchmarkResult:
         # self._load_per_rank_outputs()
         if self.SUBMITTER_SYSTEM_PATH_INDEXES:
             self._extract_submitter_metadata()
+        self._load_system_yaml()
 
     def _extract_submitter_metadata(self):
         try:
@@ -305,9 +309,99 @@ class BenchmarkResult:
             try:
                 with open(metadata_path, 'r') as f:
                     self.metadata = json.load(f)
-                self.logger.verbose(f"Loaded metadata from {metadata_path}")
+                self.logger.ridiculous(f"Loaded metadata from {metadata_path}")
             except Exception as e:
                 self.logger.error(f"Failed to load metadata from {metadata_path}: {e}")
+
+    def _load_system_yaml(self):
+        # This is going to be annoying because one submitter has what I'm calling "system_group" and they handle
+        #  it in a way that I don't like. The system yaml file is named for the group, not the system
+        import pdb
+        try:
+            split_path = self.benchmark_result_root_dir.split('/')
+            # For a given run, we want to go to the results level, change to systems, and read the correct systems.yaml file
+            for result_dir_name in ["results", "result"]:
+                if result_dir_name in split_path:
+                    result_index = split_path.index(result_dir_name)
+                    break
+            else:
+                pdb.set_trace()
+
+            system_path_list = split_path[:result_index]
+            system_path = os.path.join(*system_path_list)
+
+            # Now we find the system path. It could be "system" or "systems"
+            for system_dir_name in ["system", "systems"]:
+                if os.path.isdir(os.path.join(system_path, system_dir_name)):
+                    system_path = os.path.join(system_path, system_dir_name)
+                    break
+
+            systems_names = [f[:-len(".yaml")] for f in os.listdir(system_path) if f.endswith('.yaml')]
+            json_system_names = [f[:-len(".json")] for f in os.listdir(system_path) if f.endswith('.json')]
+
+            # Now we try to match the system_name to the systems.yaml files we found
+            # One submitter has "system_group" and this is what we're doing for that
+            if system_group := self.submitter_metadata.get('system_group'):
+                check_filename = f"{system_group}.yaml"
+            else:
+                check_filename = f"{self.submitter_metadata["system_name"]}.yaml"
+
+
+            # Check for the exact match first:
+            if os.path.isfile(os.path.join(system_path, check_filename)):
+                system_yaml_path = os.path.join(system_path, check_filename)
+                self.logger.verbose(f'Found system YAML at {system_yaml_path}')
+                self._read_system_description_yaml(system_yaml_path)
+                return
+            elif os.path.isfile(os.path.join(system_path, check_filename.lower())):
+                system_yaml_path = os.path.join(system_path, check_filename.lower())
+                self.logger.verbose(f'Found system YAML at {system_yaml_path}')
+                self._read_system_description_yaml(system_yaml_path)
+                return
+
+            # Check for exact match with a json file, if it exists
+            check_file_path_json = os.path.join(system_path, f"{self.submitter_metadata["system_name"]}.json")
+            if os.path.isfile(check_file_path_json):
+                system_yaml_path = check_file_path_json
+                self.logger.verbose(f'Found system YAML at {system_yaml_path}')
+                self._read_system_description_yaml(system_yaml_path)
+                return
+
+            # If no exact match, try to match the system_name to the systems.yaml files we found
+            # Check if self.submitter_metadata['system_name'] is a substring of any of the systems.yaml files we found
+            # If the system_name is a substring of any of the systems.yaml files, use that
+            for system_name in systems_names:
+                self.logger.ludicrous(f'Checking {system_name} in {self.submitter_metadata["system_name"]}...')
+                if system_name.lower() in self.submitter_metadata['system_name'].lower():
+                    system_yaml_path = os.path.join(system_path, f"{system_name}.yaml")
+                    self.logger.verbose(f'Found system YAML at {system_yaml_path}')
+                    self._read_system_description_yaml(system_yaml_path)
+                    return
+
+            self.logger.error(f'No system YAML found for {self.submitter_metadata["system_name"]} in {systems_names}')
+            self.expected_system_description_yaml_path = os.path.join(system_path, check_filename)
+            self.system_description_error = f"No system YAML found."
+
+        except Exception as e:
+            pdb.post_mortem()
+
+    def _read_system_description_yaml(self, system_yaml_path):
+        with open(system_yaml_path, 'r') as f:
+            try:
+                self.expected_system_description_yaml_path = system_yaml_path
+                if system_yaml_path.endswith('.json'):
+                    self.logger.warning(f'Found system YAML at {system_yaml_path} in JSON format')
+                    self.system_description = json.load(f)
+                else:
+                    self.logger.info(f'Found system YAML at {system_yaml_path} in YAML format')
+                    self.system_description = yaml.safe_load(f)
+            except yaml.scanner.ScannerError as e:
+                self.logger.error(f"Improperly formatted yaml: {system_yaml_path} - {e}")
+                self.system_description_error = f"Improperly formatted yaml: {system_yaml_path} - {e}"
+            except Exception as e:
+                import pdb
+                pdb.post_mortem()
+                self.system_description = str(e)
 
     def _load_dlio_summary_file(self):
         # Find and load DLIO summary file
@@ -333,7 +427,7 @@ class BenchmarkResult:
                     try:
                         with open(config_path, 'r') as f:
                             self.hydra_configs[config_file] = yaml.load(f, Loader=yaml.Loader)
-                        self.logger.verbose(f"Loaded Hydra config from {config_path}")
+                        self.logger.ridiculous(f"Loaded Hydra config from {config_path}")
                     except Exception as e:
                         self.logger.error(f"Failed to load Hydra config from {config_path}: {e}")
 
@@ -390,7 +484,7 @@ class BenchmarkResult:
                 with open(rank_output_path, 'r') as f:
                     rank_output = json.load(f)
                 per_rank_content[rank] = rank_output
-                self.logger.verbosest(f"Loaded rank_output from {rank_output_path}")
+                self.logger.ridiculous(f"Loaded rank_output from {rank_output_path}")
             except Exception as e:
                 self.logger.error(f"Failed to load rank_output from {rank_output_path}: {e}")
 
@@ -426,9 +520,13 @@ class BenchmarkRun:
         self.accelerator = None
         self.command = None
         self.num_processes = None
+        self.num_hosts = None
         self.parameters = dict()
         self.override_parameters = dict()
         self.system_info = None
+        self.system_description = dict()
+        self.system_description_error = ""
+        self.expected_system_description_yaml_path = None
         self.metrics = {}
         self._run_id = None
         self._category = None
@@ -496,9 +594,54 @@ class BenchmarkRun:
             "system_info": self.system_info.as_dict() if self.system_info else None,
             "metrics": self.metrics,
         }
+
+        add_err = ""
+        if self.benchmark_result.system_description_error:
+            add_err = self.benchmark_result.system_description_error
+            add_err = add_err.replace("\n", " ")
+            add_err = add_err.replace(",", " | ")
+            self.logger.error(f"Error parsing system description: {add_err}")
+        elif isinstance(self.system_description, str):
+            # This means we got an error and wan tto keep it as part of the error
+            ret_dict["system_description"] = self.system_description
+            add_err = self.system_description
+            self.system_description = ""
+        elif isinstance(self.system_description, dict):
+            # This means we have what we expect and don't need to handle an existing error.
+            for system_description_key in ["System", "system", "storage_system"]:
+                if system_description_key in self.system_description.keys():
+                    ret_dict["System"] = self.system_description[system_description_key]
+                    break
+            else:
+                add_err = f"Error parsing system info. Keys: {', '.join(self.system_description.keys())}"
+        elif isinstance(self.system_description, Exception):
+            self.logger.error(f"Error parsing system info. Expected Str or Dict. Got {type(self.system_description)}")
+            add_err = str(self.system_description)
+        elif self.system_description is None:
+            self.system_description = ""
+            add_err = f"Unable to parse system description file."
+        else:
+            add_err = f"Error parsing system info. Expected Str or Dict. Got {type(self.system_description)}"
+
+        if self.system_description_error:
+            self.logger.error(f"Error parsing system description: {self.system_description_error}")
+            self.system_description_error += add_err
+        else:
+            self.system_description_error = add_err
+        ret_dict["system_description_error"] = add_err
+
+        for k, v in self.__dict__.items():
+            if type(v) in [str, int, float, bool]:
+                ret_dict[k] = v
+
+        if self.benchmark_result:
+            ret_dict['summary'] = self.benchmark_result.summary
+
         if self.accelerator:
             ret_dict["accelerator"] = str(self.accelerator)
 
+        if "System" not in ret_dict.keys():
+            ret_dict["System"] = "No data found"
         return ret_dict
 
     def _process_benchmark_instance(self, benchmark_instance):
@@ -508,6 +651,7 @@ class BenchmarkRun:
         self.command = getattr(benchmark_instance.args, 'command', None)
         self.run_datetime = benchmark_instance.run_datetime
         self.num_processes = benchmark_instance.args.num_processes
+        self.num_hosts = len(benchmark_instance.args.hosts)
         
         # Extract parameters from the benchmark instance
         if hasattr(benchmark_instance, 'combined_params'):
@@ -528,6 +672,12 @@ class BenchmarkRun:
             self.submitter = benchmark_result.submitter_metadata.get('submitter', None)
             self.submitted_category = benchmark_result.submitter_metadata.get('submitted_category', CLOSED).lower()
             self.system_name = benchmark_result.submitter_metadata.get('system_name', None)
+            self.system_group = benchmark_result.submitter_metadata.get('system_group', None)
+
+            if self.system_group:
+                self.system_name = f"{self.system_name} - {self.system_group}"
+
+            self.full_system_name = f"{self.submitter} - {self.system_name}"
 
         # Process the summary and hydra configs to find what was run
         summary_workload = benchmark_result.summary.get('workload', {})
@@ -556,6 +706,7 @@ class BenchmarkRun:
         self.model = self.model.replace("_", "-")
 
         self.num_processes = benchmark_result.summary["num_accelerators"]
+        self.num_hosts = benchmark_result.summary.get("num_hosts", 1)
 
         # Set command for training
         if self.benchmark_type == BENCHMARK_TYPES.training:
@@ -578,6 +729,8 @@ class BenchmarkRun:
                 self.override_parameters[p[len('++workload.'):]] = v
 
         self.system_info = ClusterInformation.from_dlio_summary_json(benchmark_result.summary, self.logger)
+        self.system_description = benchmark_result.system_description
+        self.expected_system_description_yaml_path = benchmark_result.expected_system_description_yaml_path
 
     def _process_result_metrics(self):
         if self.benchmark_type == BENCHMARK_TYPES.training:
@@ -596,6 +749,9 @@ class BenchmarkRun:
             # Here we need to pull the minimum throughput for each checkpoint across all ranks
             # This will be nested dicts of {<checkpoint_operation>: {<checkpoint_number>: List[Dict]}}
             checkpoint_dicts = dict(save=dict(), load=dict())
+            min_start_time = dict(save=dict(), load=dict())
+            max_end_time = dict(save=dict(), load=dict())
+            datetime_str_format = "%Y-%m-%dT%H:%M:%S.%f"
             for rank, stats in self.benchmark_result.per_rank_per_epoch_stats.items():
                 # We have epoch set to 1 by default
                 rank_dicts = stats.get("1")
@@ -613,9 +769,27 @@ class BenchmarkRun:
                             "start": value.get("start"),
                             "end": value.get("end"),
                         }
+
+                        start_time = datetime.strptime(dict_to_append["start"], datetime_str_format)
+                        stop_time = datetime.strptime(dict_to_append["end"], datetime_str_format)
+
+                        if not min_start_time[checkpoint_operation].get(checkpoint_number) or start_time < min_start_time[checkpoint_operation][checkpoint_number]:
+                            min_start_time[checkpoint_operation][checkpoint_number] = start_time
+                        if not max_end_time[checkpoint_operation].get(checkpoint_number) or stop_time > max_end_time[checkpoint_operation][checkpoint_number]:
+                            max_end_time[checkpoint_operation][checkpoint_number] = stop_time
+
                         if checkpoint_number not in checkpoint_dicts[checkpoint_operation].keys():
                             checkpoint_dicts[checkpoint_operation][checkpoint_number] = []
                         checkpoint_dicts[checkpoint_operation][checkpoint_number].append(dict_to_append)
+
+            self.metrics["checkpoint_size_GB"] = self.benchmark_result.summary['metric'].get("checkpoint_size_GB")
+            max_durations = dict(save=list(), load=list())
+            for operation in ("save", "load"):
+                max_durations[operation] = [(e - s).seconds for e, s in zip(max_end_time[operation].values(), min_start_time[operation].values())]
+                if not max_durations[operation]:
+                    continue
+                self.metrics[f"mean_{operation}_duration"] = mean(max_durations[operation])
+                self.metrics[f"calculated_{operation}_throughput_GB_per_second"] = self.metrics["checkpoint_size_GB"] / self.metrics[f"mean_{operation}_duration"]
 
             min_throughputs = dict(save=list(), load=list())
             mean_throughputs = dict(save=list(), load=list())
@@ -630,10 +804,13 @@ class BenchmarkRun:
                     continue
                 self.metrics[f"{operation}_mean_of_min_throughput"] = mean(throughput_list)
 
+
             # for operation, throughput_list in mean_throughputs.items():
             #     if not throughput_list:
             #         continue
             #     self.metrics[f"{operation}_mean_of_mean_throughput"] = mean(throughput_list)
+
+        self.metrics["processes_per_host"] = self.num_processes / self.num_hosts
 
 
 
@@ -662,7 +839,7 @@ class RulesChecker(abc.ABC):
             return self.issues
         for check_method in self.check_methods:
             try:
-                self.logger.debug(f"Running check {check_method.__name__}")
+                self.logger.debug(f"Running check '{check_method.__name__}'")
                 method_issues = check_method()
                 if method_issues:
                     if isinstance(method_issues, list):
@@ -688,6 +865,35 @@ class RunRulesChecker(RulesChecker):
     def __init__(self, benchmark_run, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.benchmark_run = benchmark_run
+
+    def check_system_description(self):
+        issues = []
+        self.logger.info(f'Checking system description: {self.benchmark_run.system_description}...')
+        if self.benchmark_run.system_description_error:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Error during system description parsing: {self.benchmark_run.system_description_error}",
+                expected="Valid yaml",
+                actual=self.benchmark_run.system_description_error,
+                severity="error"
+            ))
+        if not self.benchmark_run.system_description:
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message="No system description found",
+                expected="Description yaml",
+                actual=self.benchmark_run.system_description,
+                severity="error"
+            ))
+        if isinstance(self.benchmark_run.system_description, str):
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Error during system description parsing: {self.benchmark_run.system_description}",
+                expected="Valid yaml",
+                actual=self.benchmark_run.system_description,
+                severity="error"
+            ))
+        return issues
 
     def _check_allowed_params(self, closed_allowed_params, open_allowed_params):
         """
@@ -1563,15 +1769,15 @@ def calculate_checkpointing_size(model, num_processes, logger) -> List[float]:
     for rank in range(num_processes):
         rank_gb.append(0)
         if zero_level == 1:
-            logger.debug(
+            logger.ludicrous(
                 "Optimizer is written by all ranks, but only the ranks on the first DP instance write the model")
             rank_gb[rank] = optimizer_gb / num_processes
             if rank < GPUpDP:
                 rank_gb[rank] += model_gb / GPUpDP
-                logger.debug(f'First DP: rank-{rank} write model: {rank_gb[rank]:.2f} GB')
+                logger.ludicrous(f'First DP: rank-{rank} write model: {rank_gb[rank]:.2f} GB')
         elif zero_level == 3:
             rank_gb[rank] = (model_gb + optimizer_gb) / num_processes
-            logger.debug(f'Rank {rank} writes portion of model and optimizer: {rank_gb[rank]:.2f} GB')
+            logger.ludicrous(f'Rank {rank} writes portion of model and optimizer: {rank_gb[rank]:.2f} GB')
         else:
             logger.error(f'Invalid zero_level: {zero_level}')
             raise ValueError("Invalid zero_level")
@@ -1772,7 +1978,7 @@ def get_runs_files(results_dir, submitters=None, exclude=None, logger=None):
         metadata_files = [f for f in files if f.endswith('_metadata.json')]
 
         if not metadata_files:
-            logger.debug(f'No metadata file found')
+            logger.ridiculous(f'No metadata file found')
             continue
         else:
             logger.debug(f'Found metadata files in directory {root}: {metadata_files}')

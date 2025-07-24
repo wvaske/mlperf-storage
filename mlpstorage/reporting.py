@@ -6,7 +6,7 @@ import sys
 
 from dataclasses import dataclass
 from statistics import mean, median, stdev
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from mlpstorage.mlps_logging import setup_logging, apply_logging_options
 from mlpstorage.config import MLPS_DEBUG, BENCHMARK_TYPES, EXIT_CODE, PARAM_VALIDATION, LLM_MODELS, MODELS, ACCELERATORS, CATEGORIES
@@ -78,6 +78,8 @@ class ReportGenerator:
         run_result_dicts = [report.benchmark_run.as_dict() for report in self.run_results.values()]
 
         if self.args.output_dir:
+            if not os.path.exists(self.args.output_dir):
+                os.makedirs(self.args.output_dir)
             self.write_csv_file(run_result_dicts)
             self.write_json_file(run_result_dicts)
             
@@ -319,13 +321,13 @@ class ReportGenerator:
             print(f'Grand Total {cat.upper()} Runs: {grand_total_runs[cat]}')
 
     def write_json_file(self, results):
-        json_file = os.path.join(self.results_dir,'results.json')
+        json_file = os.path.join(self.args.output_dir,'results.json')
         self.logger.info(f'Writing results to {json_file}')
         with open(json_file, 'w') as f:
             json.dump(results, f, indent=2)
 
     def write_csv_file(self, results):
-        csv_file = os.path.join(self.results_dir,'results.csv')
+        csv_file = os.path.join(self.args.output_dir,'results.csv')
         self.logger.info(f'Writing results to {csv_file}')
         flattened_results = [flatten_nested_dict(r) for r in results]
         flattened_results = [remove_nan_values(r) for r in flattened_results]
