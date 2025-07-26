@@ -344,7 +344,7 @@ class BenchmarkResult:
             if system_group := self.submitter_metadata.get('system_group'):
                 check_filename = f"{system_group}.yaml"
             else:
-                check_filename = f"{self.submitter_metadata["system_name"]}.yaml"
+                check_filename = f"{self.submitter_metadata['system_name']}.yaml"
 
 
             # Check for the exact match first:
@@ -537,6 +537,7 @@ class BenchmarkRun:
         self.submitter = None
         self.submitted_category = None
         self.system_name = None
+        self.device_name = None
 
         self.benchmark_result = benchmark_result
         self.benchmark_instance = benchmark_instance
@@ -600,7 +601,7 @@ class BenchmarkRun:
             add_err = self.benchmark_result.system_description_error
             add_err = add_err.replace("\n", " ")
             add_err = add_err.replace(",", " | ")
-            self.logger.error(f"Error parsing system description: {add_err}")
+            self.logger.verboser(f"Error parsing system description: {add_err}")
         elif isinstance(self.system_description, str):
             # This means we got an error and wan tto keep it as part of the error
             ret_dict["system_description"] = self.system_description
@@ -615,7 +616,7 @@ class BenchmarkRun:
             else:
                 add_err = f"Error parsing system info. Keys: {', '.join(self.system_description.keys())}"
         elif isinstance(self.system_description, Exception):
-            self.logger.error(f"Error parsing system info. Expected Str or Dict. Got {type(self.system_description)}")
+            self.logger.verboser(f"Error parsing system info. Expected Str or Dict. Got {type(self.system_description)}")
             add_err = str(self.system_description)
         elif self.system_description is None:
             self.system_description = ""
@@ -624,7 +625,7 @@ class BenchmarkRun:
             add_err = f"Error parsing system info. Expected Str or Dict. Got {type(self.system_description)}"
 
         if self.system_description_error:
-            self.logger.error(f"Error parsing system description: {self.system_description_error}")
+            self.logger.verboser(f"Error parsing system description: {self.system_description_error}")
             self.system_description_error += add_err
         else:
             self.system_description_error = add_err
@@ -675,6 +676,7 @@ class BenchmarkRun:
             self.system_group = benchmark_result.submitter_metadata.get('system_group', None)
 
             if self.system_group:
+                self.device_name = self.system_name
                 self.system_name = f"{self.system_name} - {self.system_group}"
 
             self.full_system_name = f"{self.submitter} - {self.system_name}"
@@ -749,9 +751,14 @@ class BenchmarkRun:
             # Here we need to pull the minimum throughput for each checkpoint across all ranks
             # This will be nested dicts of {<checkpoint_operation>: {<checkpoint_number>: List[Dict]}}
             checkpoint_dicts = dict(save=dict(), load=dict())
-            min_start_time = dict(save=dict(), load=dict())
-            max_end_time = dict(save=dict(), load=dict())
+            max_durations = dict(save=dict(), load=dict())
+            calculated_max_duration = dict(save=dict(), load=dict())
             datetime_str_format = "%Y-%m-%dT%H:%M:%S.%f"
+            start_times = dict(save=dict(), load=dict())
+            end_times = dict(save=dict(), load=dict())
+            durations = dict(save=dict(), load=dict())
+            throughputs = dict(save=dict(), load=dict())
+            sizes = dict(save=dict(), load=dict())
             for rank, stats in self.benchmark_result.per_rank_per_epoch_stats.items():
                 # We have epoch set to 1 by default
                 rank_dicts = stats.get("1")
@@ -770,45 +777,53 @@ class BenchmarkRun:
                             "end": value.get("end"),
                         }
 
-                        start_time = datetime.strptime(dict_to_append["start"], datetime_str_format)
-                        stop_time = datetime.strptime(dict_to_append["end"], datetime_str_format)
+                        for nested_dict in [start_times, end_times, durations, throughputs, sizes]:
+                            if not nested_dict[checkpoint_operation].get(checkpoint_number):
+                                nested_dict[checkpoint_operation][checkpoint_number] = []
 
-                        if not min_start_time[checkpoint_operation].get(checkpoint_number) or start_time < min_start_time[checkpoint_operation][checkpoint_number]:
-                            min_start_time[checkpoint_operation][checkpoint_number] = start_time
-                        if not max_end_time[checkpoint_operation].get(checkpoint_number) or stop_time > max_end_time[checkpoint_operation][checkpoint_number]:
-                            max_end_time[checkpoint_operation][checkpoint_number] = stop_time
+                        start_times[checkpoint_operation][checkpoint_number].append(datetime.strptime(value.get("start"), "%Y-%m-%dT%H:%M:%S.%f"))
+                        end_times[checkpoint_operation][checkpoint_number].append(datetime.strptime(value.get("end"), "%Y-%m-%dT%H:%M:%S.%f"))
+                        durations[checkpoint_operation][checkpoint_number].append(value.get("duration"))
+                        throughputs[checkpoint_operation][checkpoint_number].append(value.get("throughput"))
+                        sizes[checkpoint_operation][checkpoint_number].append(value.get("duration") * value.get("throughput"))
 
+                        if not max_durations[checkpoint_operation].get(checkpoint_number) or value.get("duration") > max_durations[checkpoint_operation][checkpoint_number]:
+                            # This is the maximum duration across ranks for a given checkpoint
+                            max_durations[checkpoint_operation][checkpoint_number] = value.get("duration")
                         if checkpoint_number not in checkpoint_dicts[checkpoint_operation].keys():
                             checkpoint_dicts[checkpoint_operation][checkpoint_number] = []
                         checkpoint_dicts[checkpoint_operation][checkpoint_number].append(dict_to_append)
 
             self.metrics["checkpoint_size_GB"] = self.benchmark_result.summary['metric'].get("checkpoint_size_GB")
-            max_durations = dict(save=list(), load=list())
+
+            op_max_durations = dict(save=list(), load=list())
             for operation in ("save", "load"):
-                max_durations[operation] = [(e - s).seconds for e, s in zip(max_end_time[operation].values(), min_start_time[operation].values())]
-                if not max_durations[operation]:
-                    continue
-                self.metrics[f"mean_{operation}_duration"] = mean(max_durations[operation])
-                self.metrics[f"calculated_{operation}_throughput_GB_per_second"] = self.metrics["checkpoint_size_GB"] / self.metrics[f"mean_{operation}_duration"]
+                if max_durations[operation]:
+                    # Report average of max durations
+                    self.metrics[f"mean_of_max_{operation}_duration"] = mean(
+                        [max_durations[operation][cp_num] for cp_num in max_durations[operation].keys()])
+
+                    # Calculate the min starts and max ends across all ranks for a given checkpoint
+                    min_starts = [min(s_times) for s_times in start_times[operation].values()]
+                    max_ends = [max(e_times) for e_times in end_times[operation].values()]
+
+                    calculated_max_duration[operation] = [max_end - min_start for max_end, min_start in zip(max_ends, min_starts)]
+                    calculated_min_throughputs = [self.metrics["checkpoint_size_GB"] / dur.total_seconds() for dur in calculated_max_duration[operation]]
+                    self.metrics[f"calculated_mean_{operation}_throughput_from_strict_times"] = mean(calculated_min_throughputs)
+
 
             min_throughputs = dict(save=list(), load=list())
-            mean_throughputs = dict(save=list(), load=list())
             for operation, op_dicts in checkpoint_dicts.items():
                 for checkpoint_number, data_dicts in op_dicts.items():
+                    # Get minimum reported throughput from all ranks in a given checkpoint
                     min_throughputs[operation].append(min([stats.get("throughput") for stats in data_dicts]))
-                    # mean_throughputs[operation].append(sum(stats.get("throughput") for stats in data_dicts) / len(data_dicts))
 
             for operation, throughput_list in min_throughputs.items():
                 self.metrics[f"num_{operation}_ops"] = len(throughput_list)
+                self.metrics[f"min_throughput_list_{operation}"] = throughput_list
                 if not throughput_list:
                     continue
-                self.metrics[f"{operation}_mean_of_min_throughput"] = mean(throughput_list)
-
-
-            # for operation, throughput_list in mean_throughputs.items():
-            #     if not throughput_list:
-            #         continue
-            #     self.metrics[f"{operation}_mean_of_mean_throughput"] = mean(throughput_list)
+                self.metrics[f"mean_of_min_{operation}_throughput"] = mean(throughput_list)
 
         self.metrics["processes_per_host"] = self.num_processes / self.num_hosts
 
@@ -866,34 +881,34 @@ class RunRulesChecker(RulesChecker):
         super().__init__(*args, **kwargs)
         self.benchmark_run = benchmark_run
 
-    def check_system_description(self):
-        issues = []
-        self.logger.info(f'Checking system description: {self.benchmark_run.system_description}...')
-        if self.benchmark_run.system_description_error:
-            issues.append(Issue(
-                validation=PARAM_VALIDATION.INVALID,
-                message=f"Error during system description parsing: {self.benchmark_run.system_description_error}",
-                expected="Valid yaml",
-                actual=self.benchmark_run.system_description_error,
-                severity="error"
-            ))
-        if not self.benchmark_run.system_description:
-            issues.append(Issue(
-                validation=PARAM_VALIDATION.INVALID,
-                message="No system description found",
-                expected="Description yaml",
-                actual=self.benchmark_run.system_description,
-                severity="error"
-            ))
-        if isinstance(self.benchmark_run.system_description, str):
-            issues.append(Issue(
-                validation=PARAM_VALIDATION.INVALID,
-                message=f"Error during system description parsing: {self.benchmark_run.system_description}",
-                expected="Valid yaml",
-                actual=self.benchmark_run.system_description,
-                severity="error"
-            ))
-        return issues
+    # def check_system_description(self):
+    #     issues = []
+    #     self.logger.info(f'Checking system description: {self.benchmark_run.system_description}...')
+    #     if self.benchmark_run.system_description_error:
+    #         issues.append(Issue(
+    #             validation=PARAM_VALIDATION.INVALID,
+    #             message=f"Error during system description parsing: {self.benchmark_run.system_description_error}",
+    #             expected="Valid yaml",
+    #             actual=self.benchmark_run.system_description_error,
+    #             severity="error"
+    #         ))
+    #     if not self.benchmark_run.system_description:
+    #         issues.append(Issue(
+    #             validation=PARAM_VALIDATION.INVALID,
+    #             message="No system description found",
+    #             expected="Description yaml",
+    #             actual=self.benchmark_run.system_description,
+    #             severity="error"
+    #         ))
+    #     if isinstance(self.benchmark_run.system_description, str):
+    #         issues.append(Issue(
+    #             validation=PARAM_VALIDATION.INVALID,
+    #             message=f"Error during system description parsing: {self.benchmark_run.system_description}",
+    #             expected="Valid yaml",
+    #             actual=self.benchmark_run.system_description,
+    #             severity="error"
+    #         ))
+    #     return issues
 
     def _check_allowed_params(self, closed_allowed_params, open_allowed_params):
         """
@@ -1122,91 +1137,91 @@ class TrainingRunRulesChecker(RunRulesChecker):
             import pdb
             pdb.set_trace()
 
-    def check_au_calculation(self):
-        issues = []
-        train_au_percent = self.benchmark_run.metrics.get('train_au_mean_percentage')
-        train_mean_samples_per_second = self.benchmark_run.benchmark_result.summary['metric'].get("train_throughput_mean_samples_per_second")
-        num_accelerators = self.benchmark_run.benchmark_result.summary['num_accelerators']
-        sps_per_accelerator = train_mean_samples_per_second / num_accelerators
-
-        # Ideal AU comes from batch size, compute time
-        workload_config = self.benchmark_run.benchmark_result.hydra_configs['config.yaml']['workload']
-        compute_time = workload_config['train']['computation_time']
-        batch_size = workload_config['reader']['batch_size']
-
-        idea_samples_per_second = batch_size / compute_time
-        min_samples_per_second = idea_samples_per_second * AU_REQUIREMENT[self.benchmark_run.model] / 100
-
-        # how close does it need to be? half a percent
-        closeness_factor = 0.995
-
-        calculated_au_percent = (sps_per_accelerator / idea_samples_per_second * 100)
-        if calculated_au_percent < (AU_REQUIREMENT[self.benchmark_run.model] * closeness_factor):
-            issues.append(Issue(
-                validation=PARAM_VALIDATION.INVALID,
-                message=f"The calculated AU (from samples per second) is below the threshold",
-                parameter="calculated_au_mean_percentage",
-                expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
-                actual=f"{calculated_au_percent:.2f}%",
-            ))
-        else:
-            issues.append(Issue(
-                validation=PARAM_VALIDATION.CLOSED,
-                message=f"The calculated AU (from samples per second) meets the threshold",
-                parameter="calculated_au_mean_percentage",
-                expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
-                actual=f"{calculated_au_percent:.2f}%",
-            ))
-
-        if abs(calculated_au_percent - train_au_percent) > (1 - closeness_factor) * 100:
-            difference = (calculated_au_percent - train_au_percent) / train_au_percent * 100
-            issues.append(Issue(
-                validation=PARAM_VALIDATION.INVALID,
-                message=f"Calculated AU (from samples per second) is {difference:0.1f}% different from the training AU mean percentage",
-                parameter="calculated_au_mean_percentage",
-                expected=f"{train_au_percent:.2f}%",
-                actual=f"{calculated_au_percent:.2f}%",
-            ))
-        else:
-            issues.append(Issue(
-                validation=PARAM_VALIDATION.CLOSED,
-                message=f"Calculated AU (from samples per second) is the same as the training AU mean percentage",
-                parameter="calculated_au_mean_percentage",
-                expected=f"{train_au_percent:.2f}%",
-                actual=f"{calculated_au_percent:.2f}%",
-            ))
-
-        # if sps_per_accelerator < (min_samples_per_second * closeness_factor):
-        #     issues.append(Issue(
-        #         validation=PARAM_VALIDATION.INVALID,
-        #         message=f"Training throughput is below {AU_REQUIREMENT[self.benchmark_run.model]}% per second, model: {self.benchmark_run.model}",
-        #         parameter="train_throughput_mean_samples_per_second",
-        #         expected=f">= {min_samples_per_second}",
-        #         actual=sps_per_accelerator
-        #     ))
-        #     issues.append(Issue(
-        #         validation=PARAM_VALIDATION.INVALID,
-        #         message=f"The calculated AU (from samples per second) of ",
-        #         parameter="calculated_au_mean_percentage",
-        #         expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
-        #         actual=(sps_per_accelerator / idea_samples_per_second * 100)
-        #     ))
-        # else:
-        #     issues.append(Issue(
-        #         validation=PARAM_VALIDATION.CLOSED,
-        #         message=f"Training throughput is {AU_REQUIREMENT[self.benchmark_run.model]}% per second or above, model: {self.benchmark_run.model}",
-        #         parameter="train_throughput_mean_samples_per_second",
-        #         expected=f">= {min_samples_per_second}",
-        #         actual=sps_per_accelerator
-        #     ))
-        #     issues.append(Issue(
-        #         validation=PARAM_VALIDATION.CLOSED,
-        #         message=f"Training throughput is below {AU_REQUIREMENT[self.benchmark_run.model]}% per second, model: {self.benchmark_run.model}",
-        #         parameter="calculated_au_mean_percentage",
-        #         expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
-        #         actual=(sps_per_accelerator / idea_samples_per_second * 100)
-        #     ))
-        return issues
+    # def check_au_calculation(self):
+    #     issues = []
+    #     train_au_percent = self.benchmark_run.metrics.get('train_au_mean_percentage')
+    #     train_mean_samples_per_second = self.benchmark_run.benchmark_result.summary['metric'].get("train_throughput_mean_samples_per_second")
+    #     num_accelerators = self.benchmark_run.benchmark_result.summary['num_accelerators']
+    #     sps_per_accelerator = train_mean_samples_per_second / num_accelerators
+    #
+    #     # Ideal AU comes from batch size, compute time
+    #     workload_config = self.benchmark_run.benchmark_result.hydra_configs['config.yaml']['workload']
+    #     compute_time = workload_config['train']['computation_time']
+    #     batch_size = workload_config['reader']['batch_size']
+    #
+    #     idea_samples_per_second = batch_size / compute_time
+    #     min_samples_per_second = idea_samples_per_second * AU_REQUIREMENT[self.benchmark_run.model] / 100
+    #
+    #     # how close does it need to be? half a percent
+    #     closeness_factor = 0.995
+    #
+    #     calculated_au_percent = (sps_per_accelerator / idea_samples_per_second * 100)
+    #     if calculated_au_percent < (AU_REQUIREMENT[self.benchmark_run.model] * closeness_factor):
+    #         issues.append(Issue(
+    #             validation=PARAM_VALIDATION.INVALID,
+    #             message=f"The calculated AU (from samples per second) is below the threshold",
+    #             parameter="calculated_au_mean_percentage",
+    #             expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+    #             actual=f"{calculated_au_percent:.2f}%",
+    #         ))
+    #     else:
+    #         issues.append(Issue(
+    #             validation=PARAM_VALIDATION.CLOSED,
+    #             message=f"The calculated AU (from samples per second) meets the threshold",
+    #             parameter="calculated_au_mean_percentage",
+    #             expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+    #             actual=f"{calculated_au_percent:.2f}%",
+    #         ))
+    #
+    #     if abs(calculated_au_percent - train_au_percent) > (1 - closeness_factor) * 100:
+    #         difference = (calculated_au_percent - train_au_percent) / train_au_percent * 100
+    #         issues.append(Issue(
+    #             validation=PARAM_VALIDATION.INVALID,
+    #             message=f"Calculated AU (from samples per second) is {difference:0.1f}% different from the training AU mean percentage",
+    #             parameter="calculated_au_mean_percentage",
+    #             expected=f"{train_au_percent:.2f}%",
+    #             actual=f"{calculated_au_percent:.2f}%",
+    #         ))
+    #     else:
+    #         issues.append(Issue(
+    #             validation=PARAM_VALIDATION.CLOSED,
+    #             message=f"Calculated AU (from samples per second) is the same as the training AU mean percentage",
+    #             parameter="calculated_au_mean_percentage",
+    #             expected=f"{train_au_percent:.2f}%",
+    #             actual=f"{calculated_au_percent:.2f}%",
+    #         ))
+    #
+    #     # if sps_per_accelerator < (min_samples_per_second * closeness_factor):
+    #     #     issues.append(Issue(
+    #     #         validation=PARAM_VALIDATION.INVALID,
+    #     #         message=f"Training throughput is below {AU_REQUIREMENT[self.benchmark_run.model]}% per second, model: {self.benchmark_run.model}",
+    #     #         parameter="train_throughput_mean_samples_per_second",
+    #     #         expected=f">= {min_samples_per_second}",
+    #     #         actual=sps_per_accelerator
+    #     #     ))
+    #     #     issues.append(Issue(
+    #     #         validation=PARAM_VALIDATION.INVALID,
+    #     #         message=f"The calculated AU (from samples per second) of ",
+    #     #         parameter="calculated_au_mean_percentage",
+    #     #         expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+    #     #         actual=(sps_per_accelerator / idea_samples_per_second * 100)
+    #     #     ))
+    #     # else:
+    #     #     issues.append(Issue(
+    #     #         validation=PARAM_VALIDATION.CLOSED,
+    #     #         message=f"Training throughput is {AU_REQUIREMENT[self.benchmark_run.model]}% per second or above, model: {self.benchmark_run.model}",
+    #     #         parameter="train_throughput_mean_samples_per_second",
+    #     #         expected=f">= {min_samples_per_second}",
+    #     #         actual=sps_per_accelerator
+    #     #     ))
+    #     #     issues.append(Issue(
+    #     #         validation=PARAM_VALIDATION.CLOSED,
+    #     #         message=f"Training throughput is below {AU_REQUIREMENT[self.benchmark_run.model]}% per second, model: {self.benchmark_run.model}",
+    #     #         parameter="calculated_au_mean_percentage",
+    #     #         expected=f">= {AU_REQUIREMENT[self.benchmark_run.model]}",
+    #     #         actual=(sps_per_accelerator / idea_samples_per_second * 100)
+    #     #     ))
+    #     return issues
 
     def check_checkpoint_files_in_code(self) -> Optional[Issue]:
         pass
@@ -1431,10 +1446,56 @@ class CheckpointSubmissionRulesChecker(MultiRunRulesChecker):
         """
         issues = []
         num_writes = num_reads = 0
-        for run in self.benchmark_runs:
-            if run.benchmark_type == BENCHMARK_TYPES.checkpointing:
-                num_writes += run.parameters.get('checkpoint', {}).get('num_checkpoints_write', 0)
-                num_reads += run.parameters.get('checkpoint', {}).get('num_checkpoints_read', 0)
+        for bench_run in self.benchmark_runs:
+            if bench_run.benchmark_type == BENCHMARK_TYPES.checkpointing:
+                num_writes += bench_run.parameters.get('checkpoint', {}).get('num_checkpoints_write', 0)
+                num_reads += bench_run.parameters.get('checkpoint', {}).get('num_checkpoints_read', 0)
+
+        reads = dict()
+        writes = dict()
+        combo = dict()
+
+        for bench_run in self.benchmark_runs:
+            if bench_run.benchmark_type == BENCHMARK_TYPES.checkpointing:
+                write_GBs = bench_run.metrics.get('mean_of_min_save_throughput', None)
+                read_GBs = bench_run.metrics.get('mean_of_min_load_throughput', None)
+                if write_GBs:
+                    writes[bench_run.run_id] = write_GBs
+                if read_GBs:
+                    reads[bench_run.run_id] = read_GBs
+                if write_GBs and read_GBs:
+                    combo[bench_run.run_id] = (write_GBs + read_GBs)/2
+
+        # pdb.set_trace()
+        if num_reads > 10:
+            best_read_id = max(reads, key=reads.get)
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Find best read ID: {best_read_id} with {reads[best_read_id]} read GB/s",
+                parameter="too many runs",
+                expected=10,
+                actual=num_reads
+            ))
+
+        if num_writes > 10:
+            best_write_id = max(writes, key=writes.get)
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Find best write ID: {best_write_id} with {writes[best_write_id]} write GB/s",
+                parameter="too many runs",
+                expected=10,
+                actual=num_writes
+            ))
+
+        if len(combo.keys()) > 1:
+            best_combo_id = max(combo, key=combo.get)
+            issues.append(Issue(
+                validation=PARAM_VALIDATION.INVALID,
+                message=f"Find best combo ID: {best_combo_id} with {combo[best_combo_id]:.2f} average read and write GB/s",
+                parameter="too many runs",
+                expected=10,
+                actual=num_reads + num_writes
+            ))
 
         if not num_reads == 10:
             issues.append(Issue(

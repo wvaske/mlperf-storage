@@ -270,7 +270,7 @@ For OPEN submissions, the total number of processes may be increased in multiple
 
 | Parameter                          | Meaning                                      | Default value                                 | Changeable in CLOSED | Changeable in OPEN |
 |------------------------------------|----------------------------------------------|-----------------------------------------------|----------------------|--------------------|
-| --ppn **(USE HOST:SLOTS INSTEAD)**     | Number of processes per node                 | N/A                                           | YES (minimal 4)      | YES (minimal 4)    |
+| --ppn **(USE HOST:SLOTS INSTEAD)** | Number of processes per node                 | N/A                                           | YES (minimal 4)      | YES (minimal 4)    |
 | --num-processes                    | Total number of processes                    | Node local: 8<br>Global: the value in Table 1 | NO                   | YES                |
 | --checkpoint-folder                | The folder to save the checkpoint data       | checkpoint/{workload}                         | YES                  | YES                |
 | --num-checkpoints-write            | Number of write checkpoints                  | 10 or 0**                                     | NO                   | NO                 |

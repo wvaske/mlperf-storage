@@ -78,10 +78,10 @@ LLM_ALLOWED_VALUES = {
 # Defined as (Model GB, Optimizer GB)
 # These need to be updated with actual values
 LLM_SIZE_BY_RANK = {
-    LLAMA3_1T: (2571, 15426),
-    LLAMA3_405B: (755, 4533),
-    LLAMA3_70B: (130, 781),
-    LLAMA3_8B: (15, 90)
+    LLAMA3_1T: (2203, 13222),   # 17997GB
+    LLAMA3_405B: (756, 4536),   # 5288GB
+    LLAMA3_70B: (130, 781),     # 911GB
+    LLAMA3_8B: (15, 90)         # 105GB
 }
 
 CHECKPOINT_RANKS_STRINGS = "\n    ".join(
