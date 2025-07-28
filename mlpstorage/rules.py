@@ -327,10 +327,6 @@ class BenchmarkResult:
             else:
                 pdb.set_trace()
 
-            if self.submitter_metadata["system_name"] == "weka-hpe-12-client-converged-resnet-h100":
-                import pdb
-                pdb.set_trace()
-
             system_path_list = split_path[:result_index]
             system_path = os.path.join(*system_path_list)
 
