@@ -1457,8 +1457,8 @@ class CheckpointSubmissionRulesChecker(MultiRunRulesChecker):
 
         for bench_run in self.benchmark_runs:
             if bench_run.benchmark_type == BENCHMARK_TYPES.checkpointing:
-                write_GBs = bench_run.metrics.get('mean_of_min_save_throughput', None)
-                read_GBs = bench_run.metrics.get('mean_of_min_load_throughput', None)
+                write_GBs = bench_run.metrics.get('calculated_mean_save_throughput_from_strict_times', None)
+                read_GBs = bench_run.metrics.get('calculated_mean_load_throughput_from_strict_times', None)
                 if write_GBs:
                     writes[bench_run.run_id] = write_GBs
                 if read_GBs:
