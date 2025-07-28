@@ -327,6 +327,10 @@ class BenchmarkResult:
             else:
                 pdb.set_trace()
 
+            if self.submitter_metadata["system_name"] == "weka-hpe-12-client-converged-resnet-h100":
+                import pdb
+                pdb.set_trace()
+
             system_path_list = split_path[:result_index]
             system_path = os.path.join(*system_path_list)
 
@@ -372,7 +376,8 @@ class BenchmarkResult:
             # If the system_name is a substring of any of the systems.yaml files, use that
             for system_name in systems_names:
                 self.logger.ludicrous(f'Checking {system_name} in {self.submitter_metadata["system_name"]}...')
-                if system_name.lower() in self.submitter_metadata['system_name'].lower():
+                if (system_name.lower() in self.submitter_metadata['system_name'].lower()
+                    or self.submitter_metadata['system_name'].lower() in system_name.lower()):
                     system_yaml_path = os.path.join(system_path, f"{system_name}.yaml")
                     self.logger.verbose(f'Found system YAML at {system_yaml_path}')
                     self._read_system_description_yaml(system_yaml_path)
