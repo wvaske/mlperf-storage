@@ -3,6 +3,7 @@ import enum
 import json
 import os
 import pdb
+import re
 import yaml
 
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ from mlpstorage.config import (MODELS, PARAM_VALIDATION, MAX_READ_THREADS_TRAINI
                                DATETIME_STR, LLM_ALLOWED_VALUES, LLM_SUBSET_PROCS, HYDRA_OUTPUT_SUBDIR, UNET, RESNET,
                                COSMOFLOW, AU_REQUIREMENT, LLM_SIZE_BY_RANK, CLOSED, OPEN)
 from mlpstorage.mlps_logging import setup_logging
-from mlpstorage.utils import is_valid_datetime_format
+from mlpstorage.utils import is_valid_datetime_format, convert_TB_to_TiB
 
 
 class RuleState(enum.Enum):
@@ -268,6 +269,12 @@ class BenchmarkResult:
         else:
             self.SUBMITTER_SYSTEM_PATH_INDEXES = None
 
+        if os.path.exists("submitter_default_system_architecture.yaml"):
+            with open("submitter_default_system_architecture.yaml", "r") as f:
+                self.SUBMITTER_DEFAULT_SYSTEM_ARCHITECTURE = yaml.safe_load(f)
+        else:
+            self.SUBMITTER_DEFAULT_SYSTEM_ARCHITECTURE = None
+
         self._process_result_directory()
 
 
@@ -400,9 +407,7 @@ class BenchmarkResult:
                 self.logger.error(f"Improperly formatted yaml: {system_yaml_path} - {e}")
                 self.system_description_error = f"Improperly formatted yaml: {system_yaml_path} - {e}"
             except Exception as e:
-                import pdb
-                pdb.post_mortem()
-                self.system_description = str(e)
+                self.system_description_error = str(e)
 
     def _load_dlio_summary_file(self):
         # Find and load DLIO summary file
@@ -603,6 +608,11 @@ class BenchmarkRun:
             add_err = add_err.replace("\n", " ")
             add_err = add_err.replace(",", " | ")
             self.logger.verboser(f"Error parsing system description: {add_err}")
+
+            if isinstance(self.system_description, dict) and "System" in self.system_description.keys():
+                # Handling the case of passing manual date form submitter default system architecture
+                ret_dict["System"] = self.system_description["System"]
+
         elif isinstance(self.system_description, str):
             # This means we got an error and wan tto keep it as part of the error
             ret_dict["system_description"] = self.system_description
@@ -643,7 +653,7 @@ class BenchmarkRun:
             ret_dict["accelerator"] = str(self.accelerator)
 
         if "System" not in ret_dict.keys():
-            ret_dict["System"] = "No data found"
+            ret_dict["System"] = dict()
         return ret_dict
 
     def _process_benchmark_instance(self, benchmark_instance):
@@ -734,6 +744,55 @@ class BenchmarkRun:
         self.system_info = ClusterInformation.from_dlio_summary_json(benchmark_result.summary, self.logger)
         self.system_description = benchmark_result.system_description
         self.expected_system_description_yaml_path = benchmark_result.expected_system_description_yaml_path
+
+        # import pdb
+        # pdb.set_trace()
+        if self.benchmark_result.SUBMITTER_DEFAULT_SYSTEM_ARCHITECTURE:
+            default_sys_arch = self.benchmark_result.SUBMITTER_DEFAULT_SYSTEM_ARCHITECTURE.get(self.submitter)
+        else:
+            default_sys_arch = None
+
+        if self.system_description is None:
+            self.system_description = dict(System=dict(system_architecture=default_sys_arch, from_default_system_architecture=True))
+
+        elif not isinstance(self.system_description, dict):
+            self.logger.error(f'Have something that is not none or a dict for system_description: {self.system_description}' )
+            self.system_description = dict(System=dict(system_architecture=default_sys_arch, from_default_system_architecture=True))
+        elif not self.system_description.get('System'):
+            # We ahve a dict that doesn't have the right keys
+            self.system_description['System'] = dict(system_architecture=default_sys_arch, from_default_system_architecture=True)
+        elif not self.system_description.get('System', {}).get('system_architecture'):
+            # Have the system dict, need to check system_architecture
+            self.system_description['System']['system_architecture'] = default_sys_arch
+            self.system_description['System']['from_default_system_architecture'] = True
+
+        self.logger.info(f'System Description: {self.system_description['System']['system_architecture']}')
+
+        # Now we want to look at usable_capacity and useable_capacity and create consistenty of units
+        # We can depend on system_description being a dictionary with key "System" here.
+        useable_capacity = self.system_description['System'].get('useable_capacity')
+        usable_capacity = self.system_description['System'].get('usable_capacity')
+
+        # I'll standardize on no "e"
+        usable_capacity = useable_capacity if useable_capacity else usable_capacity
+        # if self.submitter == "Micron":
+        #     import pdb
+        #     pdb.set_trace()
+        if usable_capacity:
+            if type(usable_capacity) not in (int, float):
+                need_to_convert = True if usable_capacity.lower().endswith("tb") else False
+                search_obj = re.search(r'[\d\.]*', usable_capacity) # Remove non-digits
+                capacity_value = float(search_obj.group()) if search_obj else 0.0
+                if need_to_convert:
+                    capacity_value = convert_TB_to_TiB(float(capacity_value))
+            else:
+                capacity_value = usable_capacity
+
+            self.system_description['System']['usable_capacity'] = f'{capacity_value:.2f} TiB'
+            if 'useable_capacity' in self.system_description['System'].keys():
+                del self.system_description['System']['useable_capacity']
+        else:
+            self.system_description['System']['usable_capacity'] = 'N/A'
 
     def _process_result_metrics(self):
         if self.benchmark_type == BENCHMARK_TYPES.training:
@@ -2041,7 +2100,7 @@ def get_runs_files(results_dir, submitters=None, exclude=None, logger=None):
 
         if not metadata_files:
             logger.ridiculous(f'No metadata file found')
-            continue
+
         else:
             logger.debug(f'Found metadata files in directory {root}: {metadata_files}')
 
@@ -2053,6 +2112,7 @@ def get_runs_files(results_dir, submitters=None, exclude=None, logger=None):
         dlio_summary_file = None
         for f in files:
             if f == 'summary.json':
+                logger.ridiculous(f'Found DLIO summary.json in directory {root}: {f}')
                 dlio_summary_file = os.path.join(root, f)
                 break
 

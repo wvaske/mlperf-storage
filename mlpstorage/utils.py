@@ -81,6 +81,12 @@ def read_config_from_file(relative_path):
     return config
 
 
+def convert_TB_to_TiB(TB_size):
+    tb_size = TB_size * 1000**3  # Convert TB to bytes
+    TiB_size = tb_size / 2**30  # Convert bytes to TiB
+    return TiB_size
+
+
 def update_nested_dict(original_dict, update_dict):
     updated_dict = {}
     for key, value in original_dict.items():
