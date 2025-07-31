@@ -2100,7 +2100,7 @@ def get_runs_files(results_dir, submitters=None, exclude=None, logger=None):
 
         if not metadata_files:
             logger.ridiculous(f'No metadata file found')
-
+            # continue
         else:
             logger.debug(f'Found metadata files in directory {root}: {metadata_files}')
 

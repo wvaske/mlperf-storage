@@ -82,6 +82,7 @@ class ReportGenerator:
                 os.makedirs(self.args.output_dir)
             self.write_csv_file(run_result_dicts)
             self.write_json_file(run_result_dicts)
+            self.write_workload_results_to_csv()
             
         return EXIT_CODE.SUCCESS
 
@@ -330,6 +331,65 @@ class ReportGenerator:
         csv_file = os.path.join(self.args.output_dir,'results.csv')
         self.logger.info(f'Writing results to {csv_file}')
         flattened_results = [flatten_nested_dict(r) for r in results]
+        flattened_results = [remove_nan_values(r) for r in flattened_results]
+        fieldnames = set()
+        for l in flattened_results:
+            fieldnames.update(l.keys())
+
+        with open(csv_file, 'w+', newline='') as file_object:
+            csv_writer = csv.DictWriter(f=file_object, fieldnames=sorted(fieldnames), lineterminator='\n')
+            csv_writer.writeheader()
+            csv_writer.writerows(flattened_results)
+
+    def write_workload_results_to_csv(self):
+        csv_file = os.path.join(self.args.output_dir, 'workload_results.csv')
+        result_dicts = []
+
+        # This line will pause the execution and allow you to inspect the variables in the current scope.
+        for key, result in self.workload_results.items():
+            result_dict = result.__dict__
+            result_dict['benchmark_type'] = result.benchmark_type.name
+            result_dict['Division'] = result.benchmark_run[0].submitted_category
+            result_dict['number_of_nodes'] = result.benchmark_run[0].num_hosts
+            result_dict['# Simulated Accelerators'] = result.benchmark_run[0].num_processes
+            result_dict['Submitter'] = key[0]
+            result_dict['System Name'] = key[1]
+            result_dict['Model'] = key[2]
+            result_dict['Accelerator'] = key[3]
+            result_dict['run_ids'] = [run.run_id for run in result.benchmark_run]
+            result_dict['num_runs'] = len(result.benchmark_run)
+
+            if result.benchmark_type == BENCHMARK_TYPES.checkpointing.name:
+                if result.metrics.get('calculated_mean_load_throughput_from_strict_times'):
+                    result_dict['Read B/W (GiB/s)'] = result.metrics.get('calculated_mean_load_throughput_from_strict_times', None)
+                    result_dict['Write B/W (GiB/s)'] = result.metrics.get('calculated_mean_save_throughput_from_strict_times', None)
+                else:
+                    result_dict['Read B/W (GiB/s)'] = result.metrics.get('mean_calculated_mean_load_throughput_from_strict_times', None)
+                    result_dict['Write B/W (GiB/s)'] = result.metrics.get('mean_calculated_mean_save_throughput_from_strict_times', None)
+                if result.metrics.get('mean_of_max_save_duration'):
+                    result_dict['Read Duration'] = result.metrics.get('mean_of_max_load_duration', None)
+                    result_dict['Write Duration'] = result.metrics.get('mean_of_max_save_duration', None)
+                else:
+                    result_dict['Read Duration'] = result.metrics.get('mean_mean_of_max_load_duration', None)
+                    result_dict['Write Duration'] = result.metrics.get('mean_mean_of_max_save_duration', None)
+
+            elif result.benchmark_type == BENCHMARK_TYPES.training.name:
+                result_dict['Read B/W (GiB/s)'] = result.metrics.get('mean_train_io_mean_MB_per_second', None)
+
+
+            result_dict['System'] = dict()
+            # import pdb
+            # pdb.set_trace()
+            if isinstance(result.benchmark_run[0].system_description['System'], dict):
+                for k, v in result.benchmark_run[0].system_description['System'].items():
+                    if isinstance(v, str) and (":" in v or v.count('.') > 1):
+                        continue
+                    result_dict['System'][k] = v
+
+
+            result_dicts.append(result_dict)
+
+        flattened_results = [flatten_nested_dict(r) for r in result_dicts]
         flattened_results = [remove_nan_values(r) for r in flattened_results]
         fieldnames = set()
         for l in flattened_results:
