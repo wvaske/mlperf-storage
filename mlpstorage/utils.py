@@ -363,6 +363,19 @@ def generate_mpi_prefix_cmd(mpi_cmd, hosts, num_processes, oversubscribe, allow_
     else:
         raise ValueError(f"Unsupported MPI command: {mpi_cmd}")
 
+    # CPU scheduling optimizations for multi-host I/O workloads
+    unique_hosts = set()
+    for host in hosts:
+        host_part = host.split(':')[0] if ':' in host else host
+        unique_hosts.add(host_part)
+    
+    if len(unique_hosts) > 1:
+        # Multi-host: prioritize even distribution across nodes
+        prefix += " --bind-to none --map-by node"
+    else:
+        # Single-host: optimize for NUMA domains
+        prefix += " --bind-to none --map-by socket"
+
     if oversubscribe:
         prefix += " --oversubscribe"
 
