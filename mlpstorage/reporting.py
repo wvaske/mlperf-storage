@@ -3,6 +3,12 @@ Report generation for MLPerf Storage benchmark results.
 
 This module provides the ReportGenerator class for validating and
 reporting on benchmark results with clear OPEN vs CLOSED messaging.
+
+Supports multiple output formats:
+- table: Formatted tables for terminal display
+- csv: Flat CSV files for data analysis
+- excel: Excel workbooks with analysis and pivot tables
+- json: JSON format for programmatic access
 """
 
 import csv
@@ -24,6 +30,11 @@ from mlpstorage.reporting import (
     ClosedRequirementsFormatter,
     ReportSummaryFormatter,
 )
+from mlpstorage.reporting.formats.table import TableFormat
+from mlpstorage.reporting.formats.csv_format import CSVFormat
+from mlpstorage.reporting.formats.json_format import JSONFormat
+from mlpstorage.reporting.formats import FormatConfig
+from mlpstorage.reporting.advanced_collector import collect_advanced_data
 
 
 @dataclass
@@ -119,15 +130,164 @@ class ReportGenerator:
         )
         return True
 
-    def generate_reports(self):
-        # Verify the results directory exists:
-        self.logger.info(f'Generating reports for {self.results_dir}')
-        run_result_dicts = [report.benchmark_run.as_dict() for report in self.run_results.values()]
+    def generate_reports(self, output_format: str = None, advanced: bool = None,
+                         include_cluster_info: bool = None, include_param_ranges: bool = None,
+                         output_file: str = None, table_style: str = None,
+                         no_colors: bool = None):
+        """
+        Generate reports in specified format(s).
 
-        self.write_csv_file(run_result_dicts)
-        self.write_json_file(run_result_dicts)
-            
+        Args:
+            output_format: Output format ('table', 'csv', 'excel', 'json', 'all').
+            advanced: Enable advanced output mode.
+            include_cluster_info: Include cluster configuration.
+            include_param_ranges: Include parameter range analysis.
+            output_file: Custom output file path.
+            table_style: Table style for terminal output.
+            no_colors: Disable terminal colors.
+
+        Returns:
+            EXIT_CODE indicating success or failure.
+        """
+        # Get settings from args if not provided
+        if self.args:
+            output_format = output_format or getattr(self.args, 'output_format', 'table')
+            advanced = advanced if advanced is not None else getattr(self.args, 'advanced_output', False)
+            include_cluster_info = include_cluster_info if include_cluster_info is not None else getattr(self.args, 'include_cluster_info', False)
+            include_param_ranges = include_param_ranges if include_param_ranges is not None else getattr(self.args, 'include_param_ranges', False)
+            output_file = output_file or getattr(self.args, 'output_file', None)
+            table_style = table_style or getattr(self.args, 'table_style', 'simple')
+            no_colors = no_colors if no_colors is not None else getattr(self.args, 'no_colors', False)
+        else:
+            output_format = output_format or 'table'
+            advanced = advanced or False
+            include_cluster_info = include_cluster_info or False
+            include_param_ranges = include_param_ranges or False
+            table_style = table_style or 'simple'
+            no_colors = no_colors or False
+
+        # If advanced mode, enable all advanced options
+        if advanced:
+            include_cluster_info = True
+            include_param_ranges = True
+
+        self.logger.info(f'Generating reports for {self.results_dir}')
+        self.logger.info(f'Output format: {output_format}')
+
+        # Collect advanced data if needed
+        advanced_data = None
+        if include_cluster_info or include_param_ranges:
+            self.logger.info('Collecting advanced data...')
+            results_list = list(self.run_results.values())
+            advanced_data = collect_advanced_data(
+                results_list,
+                include_param_ranges=include_param_ranges,
+                include_cluster_info=include_cluster_info,
+                logger=self.logger
+            )
+
+        # Create format config
+        format_config = FormatConfig(
+            output_path=output_file,
+            include_advanced=advanced,
+            include_cluster_info=include_cluster_info,
+            include_param_ranges=include_param_ranges
+        )
+
+        # Generate reports based on format
+        results_list = list(self.run_results.values())
+        generated_files = []
+
+        try:
+            if output_format in ('table', 'all'):
+                self._generate_table_output(results_list, advanced_data, table_style, not no_colors)
+
+            if output_format in ('csv', 'all'):
+                files = self._generate_csv_output(results_list, format_config, advanced_data)
+                generated_files.extend(files)
+
+            if output_format in ('excel', 'all'):
+                file = self._generate_excel_output(results_list, format_config, advanced_data)
+                if file:
+                    generated_files.append(file)
+
+            if output_format in ('json', 'all'):
+                file = self._generate_json_output(results_list, format_config, advanced_data)
+                generated_files.append(file)
+
+            # Also generate legacy format files for backward compatibility
+            if output_format == 'all':
+                run_result_dicts = [report.benchmark_run.as_dict() for report in self.run_results.values()]
+                self.write_csv_file(run_result_dicts)
+                self.write_json_file(run_result_dicts)
+
+        except Exception as e:
+            self.logger.error(f"Error generating reports: {e}")
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+            return EXIT_CODE.FAILURE
+
+        if generated_files:
+            self.logger.info(f'Generated {len(generated_files)} report file(s):')
+            for f in generated_files:
+                self.logger.info(f'  - {f}')
+
         return EXIT_CODE.SUCCESS
+
+    def _generate_table_output(self, results: List[Result], advanced_data: Optional[Dict],
+                               style: str = 'simple', use_colors: bool = True) -> None:
+        """Generate formatted table output to stdout."""
+        table_formatter = TableFormat(style=style, use_colors=use_colors)
+        output = table_formatter.generate(results, self.workload_results, advanced_data)
+        print(output)
+
+    def _generate_csv_output(self, results: List[Result], config: FormatConfig,
+                             advanced_data: Optional[Dict]) -> List[str]:
+        """Generate CSV output files."""
+        csv_formatter = CSVFormat(config=config)
+        files = csv_formatter.generate_all_csvs(
+            results, self.workload_results, self.results_dir, advanced_data
+        )
+        return list(files.values())
+
+    def _generate_excel_output(self, results: List[Result], config: FormatConfig,
+                               advanced_data: Optional[Dict]) -> Optional[str]:
+        """Generate Excel output file."""
+        try:
+            from mlpstorage.reporting.formats.excel import ExcelFormat, EXCEL_AVAILABLE
+            if not EXCEL_AVAILABLE:
+                self.logger.warning(
+                    "Excel support not available. Install with: pip install openpyxl"
+                )
+                return None
+
+            excel_formatter = ExcelFormat(config=config)
+            output_path = os.path.join(self.results_dir, 'results.xlsx')
+            content = excel_formatter.generate(results, self.workload_results, advanced_data)
+
+            with open(output_path, 'wb') as f:
+                f.write(content)
+
+            return output_path
+
+        except ImportError:
+            self.logger.warning(
+                "Excel support not available. Install with: pip install openpyxl"
+            )
+            return None
+
+    def _generate_json_output(self, results: List[Result], config: FormatConfig,
+                              advanced_data: Optional[Dict]) -> str:
+        """Generate JSON output file."""
+        json_formatter = JSONFormat(config=config)
+        output_path = os.path.join(self.results_dir, 'results_report.json')
+        content = json_formatter.generate(results, self.workload_results, advanced_data)
+
+        with open(output_path, 'wb') as f:
+            f.write(content)
+
+        return output_path
 
     def accumulate_results(self) -> None:
         """

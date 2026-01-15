@@ -11,6 +11,47 @@ from mlpstorage.cli.common_args import (
 )
 
 
+# Output format choices
+OUTPUT_FORMATS = ['table', 'csv', 'excel', 'json', 'all']
+
+# Help messages for report arguments
+REPORT_HELP = {
+    'output_format': (
+        "Output format for the report. Options: "
+        "'table' (formatted terminal output), "
+        "'csv' (flat CSV files), "
+        "'excel' (Excel workbook with analysis), "
+        "'json' (JSON format), "
+        "'all' (generate all formats). Default: table"
+    ),
+    'output_file': (
+        "Custom output file path. If not specified, files are written "
+        "to the results directory with auto-generated names."
+    ),
+    'advanced_output': (
+        "Enable advanced output mode. Includes extended data such as "
+        "parameter ranges across runs and detailed cluster configuration."
+    ),
+    'include_cluster_info': (
+        "Include detailed cluster configuration in the report. "
+        "Shows per-host CPU, memory, and system information."
+    ),
+    'include_param_ranges': (
+        "Include parameter range analysis in the report. "
+        "Shows min/max/avg values for numeric parameters across runs."
+    ),
+    'table_style': (
+        "Table style for terminal output. Options: "
+        "'simple' (basic borders), "
+        "'grid' (full grid), "
+        "'minimal' (no borders). Default: simple"
+    ),
+    'no_colors': (
+        "Disable terminal colors in table output."
+    ),
+}
+
+
 def add_reports_arguments(parser):
     """Add reports command arguments to the parser.
 
@@ -33,6 +74,59 @@ def add_reports_arguments(parser):
         '--output-dir',
         type=str,
         help=HELP_MESSAGES['output_dir']
+    )
+
+    # Output format options
+    reportgen.add_argument(
+        '--output-format', '-f',
+        type=str,
+        choices=OUTPUT_FORMATS,
+        default='table',
+        help=REPORT_HELP['output_format']
+    )
+
+    reportgen.add_argument(
+        '--output-file', '-o',
+        type=str,
+        help=REPORT_HELP['output_file']
+    )
+
+    # Advanced output options
+    reportgen.add_argument(
+        '--advanced-output', '--advanced',
+        action='store_true',
+        default=False,
+        help=REPORT_HELP['advanced_output']
+    )
+
+    reportgen.add_argument(
+        '--include-cluster-info',
+        action='store_true',
+        default=False,
+        help=REPORT_HELP['include_cluster_info']
+    )
+
+    reportgen.add_argument(
+        '--include-param-ranges',
+        action='store_true',
+        default=False,
+        help=REPORT_HELP['include_param_ranges']
+    )
+
+    # Table formatting options
+    reportgen.add_argument(
+        '--table-style',
+        type=str,
+        choices=['simple', 'grid', 'minimal'],
+        default='simple',
+        help=REPORT_HELP['table_style']
+    )
+
+    reportgen.add_argument(
+        '--no-colors',
+        action='store_true',
+        default=False,
+        help=REPORT_HELP['no_colors']
     )
 
     add_universal_arguments(reportgen)

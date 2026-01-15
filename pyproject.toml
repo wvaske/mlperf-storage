@@ -26,9 +26,17 @@ test = [
     "pytest-cov>=4.0",
     "pytest-mock>=3.0",
 ]
+# Excel report generation support
+excel = [
+    "openpyxl>=3.0.0",
+]
 # Full installation with DLIO for running benchmarks
 full = [
     "dlio-benchmark @ git+https://github.com/argonne-lcf/dlio_benchmark.git@mlperf_storage_v2.0",
+]
+# All reporting features including Excel
+reporting = [
+    "openpyxl>=3.0.0",
 ]
 
 [project.urls]
