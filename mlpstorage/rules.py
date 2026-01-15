@@ -218,6 +218,11 @@ class ClusterInformation:
             "total_cores": self.total_cores,
         }
 
+    @property
+    def info(self):
+        """Property used by MLPSJsonEncoder for serialization."""
+        return self.as_dict()
+
     def calculate_aggregated_info(self):
         """Calculate aggregated system information across all hosts"""
         for host_info in self.host_info_list:
@@ -226,16 +231,43 @@ class ClusterInformation:
                 self.total_cores += host_info.cpu.num_cores
 
     @classmethod
-    def from_dlio_summary_json(cls, summary, logger) -> 'ClusterInformation':
+    def from_dlio_summary_json(cls, summary, logger) -> Optional['ClusterInformation']:
+        """Create ClusterInformation from DLIO summary.json data.
+
+        Returns None if the required fields are missing from the summary.
+        """
         host_memories = summary.get("host_memory_GB")
         host_cpus = summary.get("host_cpu_count")
-        num_hosts = summary.get("num_hosts")
+        if host_memories is None or host_cpus is None:
+            return None
         host_info_list = []
         inst = cls(host_info_list, logger, calculate_aggregated_info=False)
         inst.total_memory_bytes = sum(host_memories) * 1024 * 1024 * 1024
         inst.total_cores = sum(host_cpus)
         return inst
 
+    @classmethod
+    def from_dict(cls, data: dict, logger) -> Optional['ClusterInformation']:
+        """Create ClusterInformation from a dictionary (e.g., from saved metadata).
+
+        Args:
+            data: Dictionary containing 'total_memory_bytes' and 'total_cores' keys.
+            logger: Logger instance.
+
+        Returns:
+            ClusterInformation instance, or None if required keys are missing.
+        """
+        if data is None:
+            return None
+        total_memory_bytes = data.get("total_memory_bytes")
+        total_cores = data.get("total_cores")
+        if total_memory_bytes is None:
+            return None
+        host_info_list = []
+        inst = cls(host_info_list, logger, calculate_aggregated_info=False)
+        inst.total_memory_bytes = total_memory_bytes
+        inst.total_cores = total_cores if total_cores is not None else 0
+        return inst
 
 
 class BenchmarkResult:
@@ -451,7 +483,13 @@ class BenchmarkRun:
                 self.override_parameters[p[len('++workload.'):]] = v
 
         self.metrics = benchmark_result.summary.get("metric")
+
+        # Try to get system_info from DLIO summary first, then fall back to metadata
         self.system_info = ClusterInformation.from_dlio_summary_json(benchmark_result.summary, self.logger)
+        if self.system_info is None and benchmark_result.metadata:
+            # Fall back to cluster_information from metadata if DLIO summary lacks it
+            cluster_info_dict = benchmark_result.metadata.get("cluster_information")
+            self.system_info = ClusterInformation.from_dict(cluster_info_dict, self.logger)
 
 
 class RulesChecker(abc.ABC):
