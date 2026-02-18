@@ -23,12 +23,14 @@ from typing import Dict, Any, Optional, List
 from mlpstorage.benchmarks.base import Benchmark
 from mlpstorage.config import (
     BENCHMARK_TYPES,
+    EXEC_TYPE,
     KVCACHE_MODELS,
     KVCACHE_DEFAULT_DURATION,
     KVCACHE_PERFORMANCE_PROFILES,
     KVCACHE_GENERATION_MODES,
 )
 from mlpstorage.interfaces import BenchmarkCommand
+from mlpstorage.utils import generate_mpi_prefix_cmd
 
 
 class KVCacheBenchmark(Benchmark):
@@ -79,6 +81,13 @@ class KVCacheBenchmark(Benchmark):
         """
         super().__init__(args, logger, run_datetime, run_number,
                          cluster_collector, validator)
+
+        # Store num_processes for MPI execution
+        self.num_processes = getattr(args, 'num_processes', None)
+
+        # Collect cluster information for distributed runs
+        if getattr(args, 'command', '') == 'run':
+            self.cluster_information = self._collect_cluster_information()
 
         # Command handler mapping
         self.command_method_map = {
@@ -300,7 +309,28 @@ class KVCacheBenchmark(Benchmark):
         if seed is not None:
             cmd_parts.append(f"--seed {seed}")
 
-        return " ".join(cmd_parts)
+        # Build the base command
+        cmd = " ".join(cmd_parts)
+
+        # Add MPI wrapper if distributed execution requested
+        exec_type = getattr(self.args, 'exec_type', None)
+        if exec_type == EXEC_TYPE.MPI:
+            hosts = getattr(self.args, 'hosts', None)
+            if hosts and len(hosts) > 0:
+                # Default num_processes to number of hosts if not specified
+                num_procs = self.num_processes or len(hosts)
+                mpi_prefix = generate_mpi_prefix_cmd(
+                    mpi_cmd=getattr(self.args, 'mpi_bin', 'mpirun'),
+                    hosts=hosts,
+                    num_processes=num_procs,
+                    oversubscribe=getattr(self.args, 'oversubscribe', False),
+                    allow_run_as_root=getattr(self.args, 'allow_run_as_root', False),
+                    params=getattr(self.args, 'mpi_params', None),
+                    logger=self.logger
+                )
+                cmd = f"{mpi_prefix} {cmd}"
+
+        return cmd
 
     def _process_results(self):
         """Process KV cache benchmark results.
@@ -355,6 +385,7 @@ class KVCacheBenchmark(Benchmark):
         # Add KV cache specific metadata
         base_metadata.update({
             'kvcache_model': self.model,
+            'model': self.model,  # Add for consistency with other benchmarks
             'num_users': self.num_users,
             'duration': self.duration,
             'gpu_mem_gb': self.gpu_mem_gb,
@@ -362,7 +393,17 @@ class KVCacheBenchmark(Benchmark):
             'cache_dir': self.cache_dir,
             'generation_mode': self.generation_mode,
             'performance_profile': self.performance_profile,
+            'num_processes': self.num_processes,  # Include for distributed runs
         })
+
+        # Add execution info for distributed runs
+        exec_type = getattr(self.args, 'exec_type', None)
+        if exec_type:
+            base_metadata['exec_type'] = exec_type.value if hasattr(exec_type, 'value') else str(exec_type)
+
+        hosts = getattr(self.args, 'hosts', None)
+        if hosts:
+            base_metadata['hosts'] = hosts
 
         # Add metrics if available
         if hasattr(self, 'metrics'):

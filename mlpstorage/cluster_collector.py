@@ -8,14 +8,49 @@ including meminfo, cpuinfo, diskstats, and network statistics.
 
 import json
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from mlpstorage.config import MPIRUN, MPIEXEC, MPI_RUN_BIN, MPI_EXEC_BIN
+from mlpstorage.interfaces.collector import ClusterCollectorInterface, CollectionResult
+
+
+# =============================================================================
+# Localhost Detection
+# =============================================================================
+
+LOCALHOST_IDENTIFIERS = ('localhost', '127.0.0.1', '::1')
+
+
+def _is_localhost(hostname: str) -> bool:
+    """Check if hostname refers to local machine.
+
+    Args:
+        hostname: The hostname to check.
+
+    Returns:
+        True if hostname refers to localhost, False otherwise.
+    """
+    hostname_lower = hostname.lower()
+    if hostname_lower in LOCALHOST_IDENTIFIERS:
+        return True
+    try:
+        local_hostname = socket.gethostname()
+        if hostname_lower == local_hostname.lower():
+            return True
+        local_fqdn = socket.getfqdn()
+        if hostname_lower == local_fqdn.lower():
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # =============================================================================
@@ -119,6 +154,44 @@ class HostSystemInfo:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'HostSystemInfo':
+        """Create instance from dictionary."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class MountInfo:
+    """Mount point information from /proc/mounts."""
+    device: str
+    mount_point: str
+    fs_type: str
+    options: str
+    dump_freq: int = 0
+    pass_num: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MountInfo':
+        """Create instance from dictionary."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class CgroupInfo:
+    """Cgroup subsystem information from /proc/cgroups."""
+    subsys_name: str
+    hierarchy: int
+    num_cgroups: int
+    enabled: bool
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'CgroupInfo':
         """Create instance from dictionary."""
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
@@ -446,6 +519,106 @@ def parse_os_release(content: str) -> Dict[str, str]:
     return result
 
 
+def parse_proc_vmstat(content: str) -> Dict[str, int]:
+    """
+    Parse /proc/vmstat content into a dictionary.
+
+    Args:
+        content: Raw content of /proc/vmstat file.
+
+    Returns:
+        Dictionary mapping field names to integer values.
+
+    Example:
+        >>> content = "nr_free_pages 12345\\nnr_zone_inactive_anon 6789\\n"
+        >>> parse_proc_vmstat(content)
+        {'nr_free_pages': 12345, 'nr_zone_inactive_anon': 6789}
+    """
+    result = {}
+    for line in content.strip().split('\n'):
+        parts = line.split()
+        if len(parts) == 2:
+            try:
+                result[parts[0]] = int(parts[1])
+            except ValueError:
+                pass
+    return result
+
+
+def parse_proc_mounts(content: str) -> List[MountInfo]:
+    """
+    Parse /proc/mounts content into a list of MountInfo objects.
+
+    Args:
+        content: Raw content of /proc/mounts file.
+
+    Returns:
+        List of MountInfo objects, one per mount point.
+
+    Example:
+        >>> content = "/dev/sda1 / ext4 rw,relatime 0 1"
+        >>> mounts = parse_proc_mounts(content)
+        >>> mounts[0].mount_point
+        '/'
+    """
+    mounts = []
+    for line in content.strip().split('\n'):
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) >= 4:
+            try:
+                mount = MountInfo(
+                    device=parts[0],
+                    mount_point=parts[1],
+                    fs_type=parts[2],
+                    options=parts[3],
+                    dump_freq=int(parts[4]) if len(parts) > 4 else 0,
+                    pass_num=int(parts[5]) if len(parts) > 5 else 0,
+                )
+                mounts.append(mount)
+            except (ValueError, IndexError):
+                continue
+    return mounts
+
+
+def parse_proc_cgroups(content: str) -> List[CgroupInfo]:
+    """
+    Parse /proc/cgroups content into a list of CgroupInfo objects.
+
+    Args:
+        content: Raw content of /proc/cgroups file.
+
+    Returns:
+        List of CgroupInfo objects, one per cgroup subsystem.
+
+    Example:
+        >>> content = "#subsys_name\\thierarchy\\tnum_cgroups\\tenabled\\ncpu\\t0\\t1\\t1\\n"
+        >>> cgroups = parse_proc_cgroups(content)
+        >>> cgroups[0].subsys_name
+        'cpu'
+    """
+    cgroups = []
+    lines = content.strip().split('\n')
+    for line in lines:
+        # Skip header line and comments
+        if line.startswith('#') or 'subsys_name' in line:
+            continue
+        parts = line.split()
+        if len(parts) >= 4:
+            try:
+                cgroup = CgroupInfo(
+                    subsys_name=parts[0],
+                    hierarchy=int(parts[1]),
+                    num_cgroups=int(parts[2]),
+                    enabled=parts[3] == '1',
+                )
+                cgroups.append(cgroup)
+            except (ValueError, IndexError):
+                continue
+    return cgroups
+
+
 # =============================================================================
 # Local System Information Collection
 # =============================================================================
@@ -468,6 +641,9 @@ def collect_local_system_info() -> Dict[str, Any]:
         - loadavg: Dict with load average info from /proc/loadavg
         - uptime: float from /proc/uptime
         - os_release: Dict from /etc/os-release
+        - vmstat: Dict from /proc/vmstat
+        - mounts: List[Dict] from /proc/mounts
+        - cgroups: List[Dict] from /proc/cgroups
         - collection_timestamp: ISO format timestamp
         - errors: Dict of any errors encountered during collection
     """
@@ -549,6 +725,32 @@ def collect_local_system_info() -> Dict[str, Any]:
     except Exception as e:
         result['errors']['os_release'] = str(e)
         result['os_release'] = {}
+
+    # Collect /proc/vmstat
+    try:
+        with open('/proc/vmstat', 'r') as f:
+            result['vmstat'] = parse_proc_vmstat(f.read())
+    except Exception as e:
+        result['errors']['vmstat'] = str(e)
+        result['vmstat'] = {}
+
+    # Collect /proc/mounts (filesystems)
+    try:
+        with open('/proc/mounts', 'r') as f:
+            mounts = parse_proc_mounts(f.read())
+            result['mounts'] = [m.to_dict() for m in mounts]
+    except Exception as e:
+        result['errors']['mounts'] = str(e)
+        result['mounts'] = []
+
+    # Collect /proc/cgroups
+    try:
+        with open('/proc/cgroups', 'r') as f:
+            cgroups = parse_proc_cgroups(f.read())
+            result['cgroups'] = [c.to_dict() for c in cgroups]
+    except Exception as e:
+        result['errors']['cgroups'] = str(e)
+        result['cgroups'] = []
 
     # Remove errors dict if empty
     if not result['errors']:
@@ -1194,3 +1396,871 @@ def collect_cluster_info(
             return result
         else:
             raise
+
+
+# =============================================================================
+# SSH Collection Script
+# =============================================================================
+
+SSH_COLLECTOR_SCRIPT = '''
+import json
+import socket
+import time
+
+def collect():
+    result = {"hostname": socket.gethostname(), "errors": {}}
+
+    files = [
+        ("/proc/meminfo", "meminfo"),
+        ("/proc/cpuinfo", "cpuinfo"),
+        ("/proc/diskstats", "diskstats"),
+        ("/proc/net/dev", "netdev"),
+        ("/proc/version", "version"),
+        ("/proc/loadavg", "loadavg"),
+        ("/proc/uptime", "uptime"),
+        ("/proc/vmstat", "vmstat"),
+        ("/proc/mounts", "mounts"),
+        ("/proc/cgroups", "cgroups"),
+    ]
+
+    for path, key in files:
+        try:
+            with open(path) as f:
+                result[key] = f.read()
+        except Exception as e:
+            result["errors"][key] = str(e)
+            result[key] = ""
+
+    try:
+        with open("/etc/os-release") as f:
+            result["os_release_raw"] = f.read()
+    except Exception as e:
+        result["errors"]["os_release"] = str(e)
+
+    result["collection_timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    print(json.dumps(result))
+
+collect()
+'''
+
+
+# =============================================================================
+# SSH Cluster Collector Class
+# =============================================================================
+
+class SSHClusterCollector(ClusterCollectorInterface):
+    """Collects system information from hosts using SSH.
+
+    This collector uses SSH to gather system information from remote hosts.
+    For localhost, it uses direct local collection to avoid SSH overhead
+    and configuration requirements.
+
+    Attributes:
+        hosts: List of hostnames or IP addresses to collect from.
+        logger: Logger instance for output.
+        ssh_username: Optional SSH username (defaults to current user).
+        timeout: Timeout in seconds for SSH connections.
+        max_workers: Maximum number of parallel SSH connections.
+    """
+
+    def __init__(
+        self,
+        hosts: List[str],
+        logger,
+        ssh_username: Optional[str] = None,
+        timeout_seconds: int = 60,
+        max_workers: int = 10
+    ):
+        """Initialize the SSH cluster collector.
+
+        Args:
+            hosts: List of hostnames/IPs, optionally with slot counts (e.g., "host1:4").
+            logger: Logger instance for messages.
+            ssh_username: Optional SSH username. If not provided, uses current user.
+            timeout_seconds: Maximum time to wait for SSH connections.
+            max_workers: Maximum number of parallel SSH connections.
+        """
+        self.hosts = hosts
+        self.logger = logger
+        self.ssh_username = ssh_username
+        self.timeout = timeout_seconds
+        self.max_workers = max_workers
+
+    def _get_unique_hosts(self) -> List[str]:
+        """Extract unique hostnames from the hosts list (removing slot counts)."""
+        unique = []
+        seen = set()
+        for host in self.hosts:
+            hostname = host.split(':')[0].strip() if ':' in host else host.strip()
+            if hostname and hostname not in seen:
+                seen.add(hostname)
+                unique.append(hostname)
+        return unique
+
+    def _build_ssh_command(self, hostname: str, remote_cmd: str) -> List[str]:
+        """Build SSH command with proper options for automation."""
+        cmd = [
+            'ssh',
+            '-o', 'BatchMode=yes',
+            '-o', f'ConnectTimeout={self.timeout}',
+            '-o', 'StrictHostKeyChecking=accept-new',
+        ]
+        if self.ssh_username:
+            cmd.extend(['-l', self.ssh_username])
+        cmd.extend([hostname, remote_cmd])
+        return cmd
+
+    def _parse_raw_collection(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse raw /proc file contents into structured data."""
+        parsed = {
+            'hostname': raw_data.get('hostname', 'unknown'),
+            'collection_timestamp': raw_data.get('collection_timestamp'),
+            'errors': raw_data.get('errors', {}),
+        }
+
+        # Parse meminfo
+        if raw_data.get('meminfo'):
+            parsed['meminfo'] = parse_proc_meminfo(raw_data['meminfo'])
+        else:
+            parsed['meminfo'] = {}
+
+        # Parse cpuinfo
+        if raw_data.get('cpuinfo'):
+            parsed['cpuinfo'] = parse_proc_cpuinfo(raw_data['cpuinfo'])
+        else:
+            parsed['cpuinfo'] = []
+
+        # Parse diskstats
+        if raw_data.get('diskstats'):
+            disks = parse_proc_diskstats(raw_data['diskstats'])
+            parsed['diskstats'] = [d.to_dict() for d in disks]
+        else:
+            parsed['diskstats'] = []
+
+        # Parse netdev
+        if raw_data.get('netdev'):
+            interfaces = parse_proc_net_dev(raw_data['netdev'])
+            parsed['netdev'] = [n.to_dict() for n in interfaces]
+        else:
+            parsed['netdev'] = []
+
+        # Parse version
+        parsed['version'] = parse_proc_version(raw_data.get('version', ''))
+
+        # Parse loadavg
+        if raw_data.get('loadavg'):
+            load_1, load_5, load_15, running, total = parse_proc_loadavg(raw_data['loadavg'])
+            parsed['loadavg'] = {
+                'load_1min': load_1,
+                'load_5min': load_5,
+                'load_15min': load_15,
+                'running_processes': running,
+                'total_processes': total
+            }
+        else:
+            parsed['loadavg'] = {}
+
+        # Parse uptime
+        parsed['uptime_seconds'] = parse_proc_uptime(raw_data.get('uptime', ''))
+
+        # Parse os_release
+        if raw_data.get('os_release_raw'):
+            parsed['os_release'] = parse_os_release(raw_data['os_release_raw'])
+        else:
+            parsed['os_release'] = {}
+
+        # Parse vmstat
+        if raw_data.get('vmstat'):
+            parsed['vmstat'] = parse_proc_vmstat(raw_data['vmstat'])
+        else:
+            parsed['vmstat'] = {}
+
+        # Parse mounts
+        if raw_data.get('mounts'):
+            mounts = parse_proc_mounts(raw_data['mounts'])
+            parsed['mounts'] = [m.to_dict() for m in mounts]
+        else:
+            parsed['mounts'] = []
+
+        # Parse cgroups
+        if raw_data.get('cgroups'):
+            cgroups = parse_proc_cgroups(raw_data['cgroups'])
+            parsed['cgroups'] = [c.to_dict() for c in cgroups]
+        else:
+            parsed['cgroups'] = []
+
+        if not parsed['errors']:
+            del parsed['errors']
+
+        return parsed
+
+    def _collect_from_single_host(self, hostname: str) -> Dict[str, Any]:
+        """Collect system information from a single host via SSH."""
+        if _is_localhost(hostname):
+            self.logger.debug(f'Collecting from {hostname} (localhost) via direct access')
+            return collect_local_system_info()
+
+        self.logger.debug(f'Collecting from {hostname} via SSH')
+
+        # Build the remote command to run the collector script
+        remote_cmd = f"python3 -c '{SSH_COLLECTOR_SCRIPT}'"
+        cmd = self._build_ssh_command(hostname, remote_cmd)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout + 10  # Extra buffer for SSH overhead
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or f'SSH failed with code {result.returncode}'
+                self.logger.warning(f'SSH collection from {hostname} failed: {error_msg}')
+                return {'hostname': hostname, 'error': error_msg}
+
+            # Parse the JSON output
+            try:
+                raw_data = json.loads(result.stdout)
+                return self._parse_raw_collection(raw_data)
+            except json.JSONDecodeError as e:
+                self.logger.warning(f'Failed to parse JSON from {hostname}: {e}')
+                return {'hostname': hostname, 'error': f'JSON parse error: {e}'}
+
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f'SSH to {hostname} timed out after {self.timeout}s')
+            return {'hostname': hostname, 'error': f'Timeout after {self.timeout}s'}
+
+        except Exception as e:
+            self.logger.warning(f'SSH collection from {hostname} failed: {e}')
+            return {'hostname': hostname, 'error': str(e)}
+
+    def collect(self, hosts: List[str], timeout: int = 60) -> CollectionResult:
+        """Collect information from all specified hosts in parallel.
+
+        Args:
+            hosts: List of hostnames or IP addresses to collect from.
+                   Note: This parameter is ignored; uses self.hosts instead.
+            timeout: Maximum time in seconds to wait for collection.
+                   Note: This parameter is ignored; uses self.timeout instead.
+
+        Returns:
+            CollectionResult with data from all hosts.
+        """
+        unique_hosts = self._get_unique_hosts()
+        self.logger.debug(f'Starting SSH cluster collection on {len(unique_hosts)} hosts')
+
+        results = {}
+        errors = []
+
+        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(unique_hosts))) as executor:
+            future_to_host = {
+                executor.submit(self._collect_from_single_host, host): host
+                for host in unique_hosts
+            }
+
+            for future in as_completed(future_to_host):
+                host = future_to_host[future]
+                try:
+                    host_data = future.result()
+                    if 'error' in host_data and len(host_data) <= 2:
+                        # Collection failed for this host
+                        errors.append(f"{host}: {host_data.get('error', 'Unknown error')}")
+                    results[host] = host_data
+                except Exception as e:
+                    self.logger.warning(f'Exception collecting from {host}: {e}')
+                    errors.append(f"{host}: {str(e)}")
+                    results[host] = {'hostname': host, 'error': str(e)}
+
+        success = len(errors) == 0 or len(results) > len(errors)
+
+        return CollectionResult(
+            success=success,
+            data=results,
+            errors=errors,
+            collection_method='ssh',
+            timestamp=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        )
+
+    def collect_local(self) -> CollectionResult:
+        """Collect information from local host only.
+
+        Returns:
+            CollectionResult with local host data.
+        """
+        local_info = collect_local_system_info()
+        hostname = local_info.get('hostname', 'localhost')
+
+        return CollectionResult(
+            success=True,
+            data={hostname: local_info},
+            errors=[],
+            collection_method='local',
+            timestamp=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        )
+
+    def is_available(self) -> bool:
+        """Check if SSH is available for use.
+
+        Returns:
+            True if SSH command is available, False otherwise.
+        """
+        return shutil.which('ssh') is not None
+
+    def get_collection_method(self) -> str:
+        """Return the name of the collection method.
+
+        Returns:
+            String identifier 'ssh'.
+        """
+        return 'ssh'
+
+
+# =============================================================================
+# Time-Series Collection
+# =============================================================================
+
+def collect_timeseries_sample() -> Dict[str, Any]:
+    """Collect time-varying system metrics for time-series analysis.
+
+    Collects only dynamic metrics that change during benchmark execution:
+    - diskstats: I/O statistics per device
+    - vmstat: Virtual memory statistics
+    - loadavg: System load averages
+    - meminfo: Memory usage
+    - netdev: Network interface statistics
+
+    Static information (cpuinfo, os_release) is excluded as it doesn't
+    change between samples.
+
+    Returns:
+        Dictionary containing timestamp, hostname, and metric data.
+        Individual metric keys may be missing if collection fails.
+    """
+    sample = {
+        'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'hostname': socket.gethostname(),
+        'errors': {},
+    }
+
+    # Collect /proc/diskstats
+    try:
+        with open('/proc/diskstats', 'r') as f:
+            disks = parse_proc_diskstats(f.read())
+            sample['diskstats'] = [d.to_dict() for d in disks]
+    except Exception as e:
+        sample['errors']['diskstats'] = str(e)
+
+    # Collect /proc/vmstat
+    try:
+        with open('/proc/vmstat', 'r') as f:
+            sample['vmstat'] = parse_proc_vmstat(f.read())
+    except Exception as e:
+        sample['errors']['vmstat'] = str(e)
+
+    # Collect /proc/loadavg
+    try:
+        with open('/proc/loadavg', 'r') as f:
+            load_1, load_5, load_15, running, total = parse_proc_loadavg(f.read())
+            sample['loadavg'] = {
+                'load_1min': load_1,
+                'load_5min': load_5,
+                'load_15min': load_15,
+                'running_processes': running,
+                'total_processes': total,
+            }
+    except Exception as e:
+        sample['errors']['loadavg'] = str(e)
+
+    # Collect /proc/meminfo
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            sample['meminfo'] = parse_proc_meminfo(f.read())
+    except Exception as e:
+        sample['errors']['meminfo'] = str(e)
+
+    # Collect /proc/net/dev
+    try:
+        with open('/proc/net/dev', 'r') as f:
+            interfaces = parse_proc_net_dev(f.read())
+            sample['netdev'] = [n.to_dict() for n in interfaces]
+    except Exception as e:
+        sample['errors']['netdev'] = str(e)
+
+    # Remove errors dict if empty
+    if not sample['errors']:
+        del sample['errors']
+
+    return sample
+
+
+class TimeSeriesCollector:
+    """Collects time-series system metrics in a background thread.
+
+    Uses a non-daemon thread with Event signaling for graceful shutdown.
+    Samples are collected at regular intervals and stored in memory.
+
+    Usage:
+        collector = TimeSeriesCollector(interval_seconds=10.0)
+        collector.start()
+        # ... run benchmark ...
+        samples = collector.stop()
+
+    Attributes:
+        interval_seconds: Time between samples in seconds.
+        max_samples: Maximum number of samples to keep (prevents memory issues).
+    """
+
+    def __init__(
+        self,
+        interval_seconds: float = 10.0,
+        max_samples: int = 3600,
+        logger=None
+    ):
+        """Initialize the time-series collector.
+
+        Args:
+            interval_seconds: Time between samples (default: 10 seconds).
+            max_samples: Maximum samples to keep (default: 3600 = 10 hours at 10s).
+            logger: Optional logger instance for debug output.
+        """
+        self.interval_seconds = interval_seconds
+        self.max_samples = max_samples
+        self.logger = logger
+
+        self._stop_event = threading.Event()
+        self._samples: List[Dict[str, Any]] = []
+        self._start_time: Optional[str] = None
+        self._end_time: Optional[str] = None
+        self._thread = threading.Thread(
+            target=self._collection_loop,
+            daemon=False,  # Non-daemon for graceful shutdown
+            name="TimeSeriesCollector"
+        )
+        self._started = False
+        self._stopped = False
+
+    def _collection_loop(self):
+        """Run periodic collection until stop signal."""
+        while not self._stop_event.is_set():
+            try:
+                sample = collect_timeseries_sample()
+
+                # Enforce max_samples limit
+                if len(self._samples) < self.max_samples:
+                    self._samples.append(sample)
+                elif self.logger:
+                    # Only log once when we hit the limit
+                    if len(self._samples) == self.max_samples:
+                        self.logger.warning(
+                            f'TimeSeriesCollector reached max_samples limit ({self.max_samples}). '
+                            f'Further samples will be dropped.'
+                        )
+
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(f'TimeSeriesCollector sample error: {e}')
+
+            # Use wait(timeout) instead of sleep() for quick response to stop signal
+            self._stop_event.wait(timeout=self.interval_seconds)
+
+    def start(self) -> None:
+        """Start background collection.
+
+        Raises:
+            RuntimeError: If collector was already started or stopped.
+        """
+        if self._stopped:
+            raise RuntimeError('TimeSeriesCollector already stopped; create a new instance')
+        if self._started:
+            raise RuntimeError('TimeSeriesCollector already started')
+
+        self._start_time = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        self._started = True
+        self._thread.start()
+
+        if self.logger:
+            self.logger.debug(
+                f'TimeSeriesCollector started (interval={self.interval_seconds}s, '
+                f'max_samples={self.max_samples})'
+            )
+
+    def stop(self) -> List[Dict[str, Any]]:
+        """Stop collection and return all samples.
+
+        Returns:
+            List of sample dictionaries collected during the run.
+
+        Raises:
+            RuntimeError: If collector was not started.
+        """
+        if not self._started:
+            raise RuntimeError('TimeSeriesCollector not started')
+        if self._stopped:
+            return self._samples
+
+        self._stop_event.set()
+        # Wait for thread with timeout slightly longer than interval
+        self._thread.join(timeout=self.interval_seconds + 5)
+
+        self._end_time = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        self._stopped = True
+
+        if self.logger:
+            self.logger.debug(
+                f'TimeSeriesCollector stopped ({len(self._samples)} samples collected)'
+            )
+
+        return self._samples
+
+    @property
+    def samples(self) -> List[Dict[str, Any]]:
+        """Get collected samples (may be incomplete if still running)."""
+        return self._samples
+
+    @property
+    def start_time(self) -> Optional[str]:
+        """Get collection start time (ISO format)."""
+        return self._start_time
+
+    @property
+    def end_time(self) -> Optional[str]:
+        """Get collection end time (ISO format)."""
+        return self._end_time
+
+    @property
+    def is_running(self) -> bool:
+        """Check if collector is currently running."""
+        return self._started and not self._stopped
+
+
+# =============================================================================
+# Time-Series SSH Script
+# =============================================================================
+
+# Lightweight SSH script for time-series collection (collects only dynamic metrics)
+TIMESERIES_SSH_SCRIPT = '''
+import json
+import socket
+import time
+
+def collect():
+    result = {"timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "hostname": socket.gethostname(), "errors": {}}
+
+    files = [
+        ("/proc/diskstats", "diskstats"),
+        ("/proc/vmstat", "vmstat"),
+        ("/proc/loadavg", "loadavg"),
+        ("/proc/meminfo", "meminfo"),
+        ("/proc/net/dev", "netdev"),
+    ]
+
+    for path, key in files:
+        try:
+            with open(path) as f:
+                result[key] = f.read()
+        except Exception as e:
+            result["errors"][key] = str(e)
+            result[key] = ""
+
+    if not result["errors"]:
+        del result["errors"]
+    print(json.dumps(result))
+
+collect()
+'''
+
+
+# =============================================================================
+# Multi-Host Time-Series Collector
+# =============================================================================
+
+class MultiHostTimeSeriesCollector:
+    """Collects time-series metrics from multiple hosts in parallel.
+
+    Uses SSH for remote hosts and direct collection for localhost.
+    Collection happens in a background thread with parallel SSH calls
+    at each interval using ThreadPoolExecutor.
+
+    Usage:
+        collector = MultiHostTimeSeriesCollector(
+            hosts=['host1', 'host2', 'localhost'],
+            interval_seconds=10.0
+        )
+        collector.start()
+        # ... run benchmark ...
+        samples_by_host = collector.stop()
+
+    Attributes:
+        hosts: List of hostnames to collect from.
+        interval_seconds: Time between collection rounds.
+        max_samples: Maximum samples per host to keep.
+    """
+
+    def __init__(
+        self,
+        hosts: List[str],
+        interval_seconds: float = 10.0,
+        max_samples: int = 3600,
+        ssh_username: Optional[str] = None,
+        ssh_timeout: int = 30,
+        max_workers: int = 10,
+        logger=None
+    ):
+        """Initialize multi-host time-series collector.
+
+        Args:
+            hosts: List of hostnames/IPs to collect from.
+            interval_seconds: Time between samples (default: 10 seconds).
+            max_samples: Maximum samples per host (default: 3600).
+            ssh_username: Optional SSH username for remote hosts.
+            ssh_timeout: SSH connection timeout in seconds.
+            max_workers: Maximum parallel SSH connections.
+            logger: Optional logger instance.
+        """
+        self.hosts = self._get_unique_hosts(hosts)
+        self.interval_seconds = interval_seconds
+        self.max_samples = max_samples
+        self.ssh_username = ssh_username
+        self.ssh_timeout = ssh_timeout
+        self.max_workers = max_workers
+        self.logger = logger
+
+        self._stop_event = threading.Event()
+        self._samples_by_host: Dict[str, List[Dict[str, Any]]] = {h: [] for h in self.hosts}
+        self._start_time: Optional[str] = None
+        self._end_time: Optional[str] = None
+        self._thread = threading.Thread(
+            target=self._collection_loop,
+            daemon=False,
+            name="MultiHostTimeSeriesCollector"
+        )
+        self._started = False
+        self._stopped = False
+
+    def _get_unique_hosts(self, hosts: List[str]) -> List[str]:
+        """Extract unique hostnames from hosts list (removing slot counts)."""
+        unique = []
+        seen = set()
+        for host in hosts:
+            hostname = host.split(':')[0].strip() if ':' in host else host.strip()
+            if hostname and hostname not in seen:
+                seen.add(hostname)
+                unique.append(hostname)
+        return unique
+
+    def _build_ssh_command(self, hostname: str, remote_cmd: str) -> List[str]:
+        """Build SSH command for remote collection."""
+        cmd = [
+            'ssh',
+            '-o', 'BatchMode=yes',
+            '-o', f'ConnectTimeout={self.ssh_timeout}',
+            '-o', 'StrictHostKeyChecking=accept-new',
+        ]
+        if self.ssh_username:
+            cmd.extend(['-l', self.ssh_username])
+        cmd.extend([hostname, remote_cmd])
+        return cmd
+
+    def _parse_remote_sample(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse raw /proc file contents from SSH collection into structured data."""
+        sample = {
+            'timestamp': raw_data.get('timestamp', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())),
+            'hostname': raw_data.get('hostname', 'unknown'),
+            'errors': raw_data.get('errors', {}),
+        }
+
+        # Parse diskstats
+        if raw_data.get('diskstats'):
+            disks = parse_proc_diskstats(raw_data['diskstats'])
+            sample['diskstats'] = [d.to_dict() for d in disks]
+
+        # Parse vmstat
+        if raw_data.get('vmstat'):
+            sample['vmstat'] = parse_proc_vmstat(raw_data['vmstat'])
+
+        # Parse loadavg
+        if raw_data.get('loadavg'):
+            load_1, load_5, load_15, running, total = parse_proc_loadavg(raw_data['loadavg'])
+            sample['loadavg'] = {
+                'load_1min': load_1,
+                'load_5min': load_5,
+                'load_15min': load_15,
+                'running_processes': running,
+                'total_processes': total,
+            }
+
+        # Parse meminfo
+        if raw_data.get('meminfo'):
+            sample['meminfo'] = parse_proc_meminfo(raw_data['meminfo'])
+
+        # Parse netdev
+        if raw_data.get('netdev'):
+            interfaces = parse_proc_net_dev(raw_data['netdev'])
+            sample['netdev'] = [n.to_dict() for n in interfaces]
+
+        if not sample['errors']:
+            del sample['errors']
+
+        return sample
+
+    def _collect_from_host(self, hostname: str) -> Dict[str, Any]:
+        """Collect single sample from a host (local or remote)."""
+        if _is_localhost(hostname):
+            return collect_timeseries_sample()
+
+        # Remote collection via SSH
+        remote_cmd = f"python3 -c '{TIMESERIES_SSH_SCRIPT}'"
+        cmd = self._build_ssh_command(hostname, remote_cmd)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout + 10
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or f'SSH failed with code {result.returncode}'
+                return {
+                    'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                    'hostname': hostname,
+                    'errors': {'ssh': error_msg}
+                }
+
+            raw_data = json.loads(result.stdout)
+            return self._parse_remote_sample(raw_data)
+
+        except subprocess.TimeoutExpired:
+            return {
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                'hostname': hostname,
+                'errors': {'ssh': f'Timeout after {self.ssh_timeout}s'}
+            }
+        except json.JSONDecodeError as e:
+            return {
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                'hostname': hostname,
+                'errors': {'json': str(e)}
+            }
+        except Exception as e:
+            return {
+                'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                'hostname': hostname,
+                'errors': {'collection': str(e)}
+            }
+
+    def _collect_all_hosts(self) -> None:
+        """Collect from all hosts in parallel."""
+        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(self.hosts))) as executor:
+            futures = {
+                executor.submit(self._collect_from_host, host): host
+                for host in self.hosts
+            }
+
+            for future in as_completed(futures, timeout=self.interval_seconds):
+                host = futures[future]
+                try:
+                    sample = future.result(timeout=self.interval_seconds / 2)
+
+                    # Enforce max_samples per host
+                    if len(self._samples_by_host[host]) < self.max_samples:
+                        self._samples_by_host[host].append(sample)
+
+                except Exception as e:
+                    # Log but continue - don't fail collection for one host
+                    if self.logger:
+                        self.logger.debug(f'Time-series collection from {host} failed: {e}')
+                    # Add error sample
+                    if len(self._samples_by_host[host]) < self.max_samples:
+                        self._samples_by_host[host].append({
+                            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                            'hostname': host,
+                            'errors': {'collection': str(e)}
+                        })
+
+    def _collection_loop(self) -> None:
+        """Run periodic collection until stop signal."""
+        while not self._stop_event.is_set():
+            try:
+                self._collect_all_hosts()
+            except Exception as e:
+                if self.logger:
+                    self.logger.debug(f'MultiHostTimeSeriesCollector collection error: {e}')
+
+            self._stop_event.wait(timeout=self.interval_seconds)
+
+    def start(self) -> None:
+        """Start background collection.
+
+        Raises:
+            RuntimeError: If collector already started or stopped.
+        """
+        if self._started:
+            raise RuntimeError('MultiHostTimeSeriesCollector already started')
+        if self._stopped:
+            raise RuntimeError('MultiHostTimeSeriesCollector already stopped; create new instance')
+
+        self._start_time = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        self._started = True
+        self._thread.start()
+
+        if self.logger:
+            self.logger.debug(
+                f'MultiHostTimeSeriesCollector started ({len(self.hosts)} hosts, '
+                f'interval={self.interval_seconds}s)'
+            )
+
+    def stop(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Stop collection and return samples organized by host.
+
+        Returns:
+            Dictionary mapping hostname -> list of samples.
+
+        Raises:
+            RuntimeError: If collector not started.
+        """
+        if not self._started:
+            raise RuntimeError('MultiHostTimeSeriesCollector not started')
+        if self._stopped:
+            return self._samples_by_host
+
+        self._stop_event.set()
+        self._thread.join(timeout=self.interval_seconds + 10)
+
+        self._end_time = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        self._stopped = True
+
+        total_samples = sum(len(samples) for samples in self._samples_by_host.values())
+        if self.logger:
+            self.logger.debug(
+                f'MultiHostTimeSeriesCollector stopped ({total_samples} total samples '
+                f'from {len(self.hosts)} hosts)'
+            )
+
+        return self._samples_by_host
+
+    @property
+    def samples_by_host(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Get collected samples organized by host."""
+        return self._samples_by_host
+
+    @property
+    def start_time(self) -> Optional[str]:
+        """Get collection start time (ISO format)."""
+        return self._start_time
+
+    @property
+    def end_time(self) -> Optional[str]:
+        """Get collection end time (ISO format)."""
+        return self._end_time
+
+    @property
+    def is_running(self) -> bool:
+        """Check if collector is currently running."""
+        return self._started and not self._stopped
+
+    def get_hosts_with_data(self) -> List[str]:
+        """Get list of hosts that have at least one sample."""
+        return [host for host, samples in self._samples_by_host.items() if samples]

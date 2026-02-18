@@ -462,6 +462,118 @@ class TestTrainingRunRulesChecker:
         assert issue is None
 
 
+class TestTrainingRunRulesCheckerNewModels:
+    """Tests for TrainingRunRulesChecker with new models (DLRM, RetinaNet, Flux)."""
+
+    @pytest.fixture
+    def mock_logger(self):
+        """Create a mock logger."""
+        return MagicMock()
+
+    def create_benchmark_run(self, mock_logger, model, parameters=None, override_parameters=None):
+        """Helper to create a BenchmarkRun for testing."""
+        default_params = {
+            'dataset': {
+                'num_files_train': 1000,
+                'data_folder': f'data/{model}/'
+            },
+            'reader': {
+                'batch_size': 16
+            },
+            'workflow': {}
+        }
+        if parameters:
+            for key, value in parameters.items():
+                if key in default_params and isinstance(value, dict):
+                    default_params[key].update(value)
+                else:
+                    default_params[key] = value
+
+        # Create minimal required objects
+        host_memory = HostMemoryInfo.from_total_mem_int(137438953472)  # 128 GB
+        host_info = HostInfo(
+            hostname="test-host",
+            memory=host_memory
+        )
+        cluster_info = ClusterInformation([host_info], mock_logger)
+
+        data = BenchmarkRunData(
+            benchmark_type=BENCHMARK_TYPES.training,
+            model=model,
+            command="run_benchmark",
+            run_datetime="20250124_120000",
+            num_processes=8,
+            parameters=default_params,
+            override_parameters=override_parameters or {},
+            system_info=cluster_info
+        )
+        return BenchmarkRun.from_data(data, mock_logger)
+
+    @pytest.mark.parametrize("model", ["dlrm", "retinanet", "flux"])
+    def test_new_model_recognized(self, mock_logger, model):
+        """New models are recognized by the checker."""
+        benchmark_run = self.create_benchmark_run(mock_logger, model)
+        checker = TrainingRunRulesChecker(benchmark_run, logger=mock_logger)
+
+        issue = checker.check_model_recognized()
+        assert issue is None, f"Model {model} should be recognized"
+
+    @pytest.mark.parametrize("model", ["dlrm", "retinanet", "flux"])
+    def test_new_model_odirect_not_supported(self, mock_logger, model):
+        """odirect is not supported for new models."""
+        benchmark_run = self.create_benchmark_run(
+            mock_logger,
+            model,
+            parameters={'reader': {'odirect': True}}
+        )
+        checker = TrainingRunRulesChecker(benchmark_run, logger=mock_logger)
+
+        issue = checker.check_odirect_supported_model()
+        assert issue is not None
+        assert issue.validation == PARAM_VALIDATION.INVALID
+        assert "odirect" in issue.message.lower()
+
+    @pytest.mark.parametrize("model", ["dlrm", "retinanet", "flux"])
+    def test_new_model_no_checkpoint_requirement(self, mock_logger, model):
+        """New models don't require checkpoint workflow."""
+        benchmark_run = self.create_benchmark_run(
+            mock_logger,
+            model,
+            parameters={'workflow': {'checkpoint': False}}
+        )
+        checker = TrainingRunRulesChecker(benchmark_run, logger=mock_logger)
+
+        # Should not return INVALID for missing checkpoint
+        issue = checker.check_workflow_parameters()
+        # Either None or not INVALID (UNET requires checkpoint, others don't)
+        if issue is not None:
+            assert issue.validation != PARAM_VALIDATION.INVALID
+
+    def test_unrecognized_model_invalid(self, mock_logger):
+        """Unrecognized model returns INVALID issue."""
+        benchmark_run = self.create_benchmark_run(mock_logger, "unknown_model")
+        checker = TrainingRunRulesChecker(benchmark_run, logger=mock_logger)
+
+        issue = checker.check_model_recognized()
+        assert issue is not None
+        assert issue.validation == PARAM_VALIDATION.INVALID
+        assert "unknown_model" in issue.message
+
+    def test_check_model_recognized_in_check_methods(self, mock_logger):
+        """Verify check_model_recognized is discovered and executed by run_checks."""
+        benchmark_run = self.create_benchmark_run(mock_logger, "dlrm")
+        checker = TrainingRunRulesChecker(benchmark_run, logger=mock_logger)
+
+        # Verify method is in check_methods list
+        method_names = [m.__name__ for m in checker.check_methods]
+        assert 'check_model_recognized' in method_names, \
+            f"check_model_recognized should be discovered, found: {method_names}"
+
+        # Verify it gets called during run_checks (no exception)
+        issues = checker.run_checks()
+        assert isinstance(issues, list)
+
+
 class TestCheckpointSubmissionRulesChecker:
     """Tests for CheckpointSubmissionRulesChecker class."""
 
@@ -538,6 +650,112 @@ class TestCheckpointSubmissionRulesChecker:
         assert all(i.validation == PARAM_VALIDATION.CLOSED for i in issues)
 
 
+class TestRulesCheckerInitialization:
+    """Tests for rules checker initialization order.
+
+    These tests verify that the initialization bug (benchmark_run not set
+    before parent __init__) is fixed. The bug occurred because:
+    1. RunRulesChecker.__init__ called super().__init__() first
+    2. RulesChecker.__init__ discovered check methods using dir(self)
+    3. These check methods reference self.benchmark_run
+    4. But self.benchmark_run wasn't set until after super().__init__()
+
+    The fix was to set self.benchmark_run BEFORE calling super().__init__().
+    """
+
+    @pytest.fixture
+    def mock_logger(self):
+        """Create a mock logger."""
+        return MagicMock()
+
+    @pytest.fixture
+    def sample_training_run(self, mock_logger):
+        """Create a sample training BenchmarkRun."""
+        host_memory = HostMemoryInfo.from_total_mem_int(274877906944)  # 256 GB
+        host = HostInfo(hostname='host1', memory=host_memory)
+        cluster_info = ClusterInformation([host], mock_logger)
+
+        data = BenchmarkRunData(
+            benchmark_type=BENCHMARK_TYPES.training,
+            model="unet3d",
+            command="run",
+            run_datetime="20250123_120000",
+            num_processes=2,
+            parameters={
+                "dataset": {"num_files_train": 168, "record_length": 131072},
+                "reader": {"read_threads": 4, "batch_size": 7},
+                "workflow": {"train": True, "checkpoint": False}
+            },
+            override_parameters={},
+            system_info=cluster_info
+        )
+        return BenchmarkRun.from_data(data, mock_logger)
+
+    @pytest.fixture
+    def sample_checkpointing_run(self, mock_logger):
+        """Create a sample checkpointing BenchmarkRun."""
+        data = BenchmarkRunData(
+            benchmark_type=BENCHMARK_TYPES.checkpointing,
+            model="llama3-8b",
+            command="run",
+            run_datetime="20250123_120000",
+            num_processes=8,
+            parameters={
+                "checkpoint": {
+                    "num_checkpoints_read": 1,
+                    "num_checkpoints_write": 1
+                }
+            },
+            override_parameters={}
+        )
+        return BenchmarkRun.from_data(data, mock_logger)
+
+    def test_training_checker_init_sets_benchmark_run_first(self, mock_logger, sample_training_run):
+        """TrainingRunRulesChecker should have benchmark_run accessible during init.
+
+        This test would have failed before the fix because benchmark_run
+        was set after super().__init__(), but the parent's __init__ tried
+        to access check methods that use self.benchmark_run.
+        """
+        # This should not raise AttributeError
+        checker = TrainingRunRulesChecker(sample_training_run, logger=mock_logger)
+
+        # Verify benchmark_run is set
+        assert checker.benchmark_run is sample_training_run
+        assert checker.benchmark_run.model == "unet3d"
+
+    def test_checkpointing_checker_init_sets_benchmark_run_first(self, mock_logger, sample_checkpointing_run):
+        """CheckpointingRunRulesChecker should have benchmark_run accessible during init."""
+        checker = CheckpointingRunRulesChecker(sample_checkpointing_run, logger=mock_logger)
+
+        assert checker.benchmark_run is sample_checkpointing_run
+        assert checker.benchmark_run.model == "llama3-8b"
+
+    def test_checker_can_run_checks_after_init(self, mock_logger, sample_training_run):
+        """Checker should be able to run all checks after initialization.
+
+        This is a regression test - before the fix, run_checks() would fail
+        because check methods couldn't access self.benchmark_run.
+        """
+        checker = TrainingRunRulesChecker(sample_training_run, logger=mock_logger)
+
+        # This should not raise AttributeError: 'TrainingRunRulesChecker' object
+        # has no attribute 'benchmark_run'
+        issues = checker.run_checks()
+
+        # Should return a list (may have issues due to small dataset)
+        assert isinstance(issues, list)
+
+    def test_checker_properties_work_after_init(self, mock_logger, sample_training_run):
+        """Checker properties should work correctly after initialization."""
+        checker = TrainingRunRulesChecker(sample_training_run, logger=mock_logger)
+
+        # These properties delegate to benchmark_run
+        assert checker.parameters is not None
+        assert checker.override_parameters is not None
+        assert checker.system_info is not None
+
+
 class TestTrainingSubmissionRulesChecker:
     """Tests for TrainingSubmissionRulesChecker class."""
 
@@ -556,3 +774,85 @@ class TestTrainingSubmissionRulesChecker:
         assert 'unet3d' in checker.supported_models
         assert 'resnet50' in checker.supported_models
         assert 'cosmoflow' in checker.supported_models
+
+
+class TestTrainingParquetFormat:
+    """Tests for parquet format validation in training benchmarks."""
+
+    @pytest.fixture
+    def mock_logger(self):
+        """Create a mock logger."""
+        return MagicMock()
+
+    def create_benchmark_run(self, mock_logger, model="dlrm", format="parquet",
+                             override_parameters=None):
+        """Helper to create a BenchmarkRun for parquet format testing."""
+        host_memory = HostMemoryInfo.from_total_mem_int(137438953472)  # 128 GB
+        host_info = HostInfo(hostname="test-host", memory=host_memory)
+        cluster_info = ClusterInformation([host_info], mock_logger)
+
+        data = BenchmarkRunData(
+            benchmark_type=BENCHMARK_TYPES.training,
+            model=model,
+            command="run_benchmark",
+            run_datetime="20250125_120000",
+            num_processes=8,
+            parameters={
+                'dataset': {
+                    'num_files_train': 1000,
+                    'data_folder': f'data/{model}_parquet/',
+                    'format': format
+                },
+                'reader': {
+                    'batch_size': 16
+                },
+                'workflow': {}
+            },
+            override_parameters=override_parameters or {},
+            system_info=cluster_info
+        )
+        return BenchmarkRun.from_data(data, mock_logger)
+
+    def test_parquet_format_is_open_category(self, mock_logger):
+        """Parquet format override should result in OPEN submission category."""
+        benchmark_run = self.create_benchmark_run(
+            mock_logger,
+            override_parameters={'dataset.format': 'parquet'}
+        )
+        checker = TrainingRunRulesChecker(benchmark_run, logger=mock_logger)
+        issues = checker.check_allowed_params()
+
+        # dataset.format is in OPEN_ALLOWED_PARAMS, so override should be OPEN
+        assert len(issues) == 1
+        assert issues[0].validation == PARAM_VALIDATION.OPEN
+        assert 'dataset.format' in issues[0].message
+
+    def test_dataset_format_in_open_allowed_params(self, mock_logger):
+        """Verify dataset.format is in OPEN_ALLOWED_PARAMS."""
+        assert 'dataset.format' in TrainingRunRulesChecker.OPEN_ALLOWED_PARAMS
+
+    def test_parquet_format_not_in_closed_allowed_params(self, mock_logger):
+        """Verify dataset.format is NOT in CLOSED_ALLOWED_PARAMS."""
+        assert 'dataset.format' not in TrainingRunRulesChecker.CLOSED_ALLOWED_PARAMS
+
+    def test_dlrm_with_parquet_format_model_recognized(self, mock_logger):
+        """DLRM model with parquet format should be recognized."""
+        benchmark_run = self.create_benchmark_run(mock_logger, model='dlrm')
+        checker = TrainingRunRulesChecker(benchmark_run, logger=mock_logger)
+
+        issue = checker.check_model_recognized()
+        assert issue is None, "DLRM model should be recognized regardless of format"
+
+    def test_multiple_format_values_are_open(self, mock_logger):
+        """Any dataset.format override (not just parquet) should be OPEN category."""
+        for format_value in ['parquet', 'csv', 'custom_format']:
+            benchmark_run = self.create_benchmark_run(
+                mock_logger,
+                override_parameters={'dataset.format': format_value}
+            )
+            checker = TrainingRunRulesChecker(benchmark_run, logger=mock_logger)
+            issues = checker.check_allowed_params()
+
+            assert len(issues) == 1
+            assert issues[0].validation == PARAM_VALIDATION.OPEN, \
+                f"dataset.format={format_value} should be OPEN category"
