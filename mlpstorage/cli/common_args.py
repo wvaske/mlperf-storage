@@ -123,7 +123,7 @@ HELP_MESSAGES = {
     'distribution': f"Distribution of the vectors. Supported options: {DISTRIBUTIONS}",
     'vdb_datagen_batch_size': "Batch size for data insertion.",
     'vdb_datagen_chunk_size': "Number of vectors to generate in each insertion chunk. Tune for memory management.",
-    'vdb_run_search': "Run the VectorDB Search benchmark with the specified parameters.",
+    'vdb_run': "Run the VectorDB Search benchmark with the specified parameters.",
     'vdb_datagen': "Generate a dataset for the VectorDB benchmark.",
     'vdb_report_count': "Number of batches between print statements",
     'num_query_processes': "Number of parallel processes to use for query execution.",
@@ -136,6 +136,20 @@ HELP_MESSAGES = {
     # MPI help messages
     'mpi_bin': f"Execution type for MPI commands. Supported options: {MPI_CMDS}",
     'exec_type': f"Execution type for benchmark commands. Supported options: {list(EXEC_TYPE)}",
+
+    # Time-series collection help messages
+    'timeseries_interval': (
+        "Interval in seconds between time-series data collection samples during benchmark execution. "
+        "Lower values provide more granular data but increase collection overhead. Default: 10 seconds."
+    ),
+    'skip_timeseries': (
+        "Disable time-series host data collection during benchmark execution. "
+        "Useful for debugging or when collection overhead is a concern."
+    ),
+    'max_timeseries_samples': (
+        "Maximum number of time-series samples to keep per host. Prevents memory issues "
+        "in long-running benchmarks. Default: 3600 (10 hours at 10-second intervals)."
+    ),
 }
 
 # Program descriptions
@@ -218,6 +232,19 @@ def add_universal_arguments(parser):
         help="View the configuration that would execute and the associated command."
     )
 
+    validation_args = parser.add_argument_group("Validation")
+    validation_args.add_argument(
+        "--verify-lockfile",
+        type=str,
+        metavar="PATH",
+        help="Validate installed packages against lockfile before benchmark execution",
+    )
+    validation_args.add_argument(
+        "--skip-validation",
+        action="store_true",
+        help="Skip environment validation (MPI, SSH, DLIO checks). Useful for debugging.",
+    )
+
 
 def add_mpi_arguments(parser):
     """Add MPI-related arguments.
@@ -282,4 +309,33 @@ def add_dlio_arguments(parser):
         type=str,
         action="append",
         help=HELP_MESSAGES['params']
+    )
+
+
+def add_timeseries_arguments(parser):
+    """Add time-series collection arguments.
+
+    These arguments control the collection of time-series host metrics
+    during benchmark execution (HOST-04, HOST-05 requirements).
+
+    Args:
+        parser: Argparse parser to add arguments to.
+    """
+    timeseries_group = parser.add_argument_group("Time-Series Collection")
+    timeseries_group.add_argument(
+        '--timeseries-interval',
+        type=float,
+        default=10.0,
+        help=HELP_MESSAGES['timeseries_interval']
+    )
+    timeseries_group.add_argument(
+        '--skip-timeseries',
+        action='store_true',
+        help=HELP_MESSAGES['skip_timeseries']
+    )
+    timeseries_group.add_argument(
+        '--max-timeseries-samples',
+        type=int,
+        default=3600,
+        help=HELP_MESSAGES['max_timeseries_samples']
     )

@@ -52,8 +52,15 @@ from mlpstorage.debug import debug_tryer_wrapper
 from mlpstorage.interfaces import BenchmarkInterface, BenchmarkConfig, BenchmarkCommand
 from mlpstorage.mlps_logging import setup_logging, apply_logging_options
 from mlpstorage.rules import BenchmarkVerifier, generate_output_location, ClusterInformation
+from mlpstorage.rules.models import ClusterSnapshots, TimeSeriesData, TimeSeriesSample
 from mlpstorage.utils import CommandExecutor, MLPSJsonEncoder
-from mlpstorage.cluster_collector import collect_cluster_info
+from mlpstorage.cluster_collector import (
+    collect_cluster_info,
+    SSHClusterCollector,
+    TimeSeriesCollector,
+    MultiHostTimeSeriesCollector,
+)
+from mlpstorage.progress import create_stage_progress, progress_context
 
 if TYPE_CHECKING:
     import logging
@@ -132,6 +139,12 @@ class Benchmark(BenchmarkInterface, abc.ABC):
 
         self.metadata_filename = f"{self.BENCHMARK_TYPE.value}_{self.run_datetime}_metadata.json"
         self.metadata_file_path = os.path.join(self.run_result_output, self.metadata_filename)
+
+        # Time-series collection (HOST-04, HOST-05)
+        self._timeseries_collector = None
+        self._timeseries_data = None
+        self.timeseries_filename = f"{self.BENCHMARK_TYPE.value}_{self.run_datetime}_timeseries.json"
+        self.timeseries_file_path = os.path.join(self.run_result_output, self.timeseries_filename)
 
         self.logger.status(f'Benchmark results directory: {self.run_result_output}')
 
@@ -327,6 +340,19 @@ class Benchmark(BenchmarkInterface, abc.ABC):
         else:
             metadata['system_info'] = None
 
+        # Include cluster snapshots if available (start and end collection)
+        if hasattr(self, 'cluster_snapshots') and self.cluster_snapshots:
+            metadata['cluster_snapshots'] = self.cluster_snapshots.as_dict()
+
+        # Include time-series data reference if available (HOST-04)
+        if hasattr(self, '_timeseries_data') and self._timeseries_data:
+            metadata['timeseries_data'] = {
+                'file': self.timeseries_filename,
+                'num_samples': self._timeseries_data.num_samples,
+                'interval_seconds': self._timeseries_data.collection_interval_seconds,
+                'hosts_collected': self._timeseries_data.hosts_collected,
+            }
+
         # Additional context (not part of BenchmarkRunData but useful)
         metadata['runtime'] = self.runtime
         metadata['verification'] = self.verification.name if self.verification else None
@@ -450,6 +476,290 @@ class Benchmark(BenchmarkInterface, abc.ABC):
             self.logger.warning(f'MPI cluster info collection failed: {e}')
             return None
 
+    def _should_use_ssh_collection(self) -> bool:
+        """Determine if SSH-based collection should be used.
+
+        SSH collection is used when:
+        - hosts are specified
+        - exec_type is NOT MPI (or exec_type is not set)
+        - command is 'run' (not datagen/configview)
+
+        Returns:
+            True if SSH collection should be used, False otherwise.
+        """
+        if not hasattr(self.args, 'hosts') or not self.args.hosts:
+            return False
+
+        if hasattr(self.args, 'command') and self.args.command in ('datagen', 'configview'):
+            return False
+
+        if hasattr(self.args, 'skip_cluster_collection') and self.args.skip_cluster_collection:
+            return False
+
+        # Use SSH for non-MPI execution
+        if not hasattr(self.args, 'exec_type') or self.args.exec_type != EXEC_TYPE.MPI:
+            return True
+
+        return False
+
+    def _collect_via_ssh(self) -> Optional['ClusterInformation']:
+        """Collect cluster information using SSH.
+
+        Returns:
+            ClusterInformation instance if collection succeeds, None otherwise.
+        """
+        try:
+            self.logger.debug('Collecting cluster information via SSH...')
+
+            ssh_username = getattr(self.args, 'ssh_username', None)
+            timeout = getattr(self.args, 'cluster_collection_timeout', 60)
+
+            collector = SSHClusterCollector(
+                hosts=self.args.hosts,
+                logger=self.logger,
+                ssh_username=ssh_username,
+                timeout_seconds=timeout
+            )
+
+            if not collector.is_available():
+                self.logger.warning('SSH not available for cluster collection')
+                return None
+
+            result = collector.collect(self.args.hosts, timeout)
+
+            if not result.success:
+                self.logger.warning(f'SSH collection had errors: {result.errors}')
+
+            # Create ClusterInformation from collected data
+            cluster_info = ClusterInformation.from_mpi_collection(
+                {**result.data, '_metadata': {
+                    'collection_method': 'ssh',
+                    'collection_timestamp': result.timestamp
+                }},
+                self.logger
+            )
+
+            self.logger.debug(
+                f'Cluster info collected via SSH: '
+                f'{cluster_info.num_hosts} hosts, '
+                f'{cluster_info.total_memory_bytes / (1024**3):.1f} GB total memory'
+            )
+
+            return cluster_info
+
+        except Exception as e:
+            self.logger.warning(f'SSH cluster info collection failed: {e}')
+            return None
+
+    def _collect_cluster_start(self) -> None:
+        """Collect cluster information at benchmark start.
+
+        Stores the result in self._cluster_info_start for later use.
+        Called at the beginning of run().
+        """
+        if not self._should_collect_cluster_info() and not self._should_use_ssh_collection():
+            self.logger.debug('Skipping start cluster collection (conditions not met)')
+            return
+
+        hosts = self.args.hosts if hasattr(self.args, 'hosts') else []
+        host_count = len(hosts) if hosts else 1
+
+        with progress_context(
+            f"Collecting cluster info ({host_count} host{'s' if host_count != 1 else ''})...",
+            total=None,  # Indeterminate - spinner
+            logger=self.logger
+        ) as (update, set_desc):
+            if self._should_use_ssh_collection():
+                set_desc("Collecting via SSH...")
+                self._cluster_info_start = self._collect_via_ssh()
+                self._collection_method = 'ssh'
+            else:
+                set_desc("Collecting via MPI...")
+                self._cluster_info_start = self._collect_cluster_information()
+                self._collection_method = 'mpi'
+
+        if self._cluster_info_start:
+            self.logger.debug(f'Collected start cluster info via {self._collection_method}')
+
+    def _collect_cluster_end(self) -> None:
+        """Collect cluster information at benchmark end.
+
+        Only collects if start collection was performed.
+        Creates ClusterSnapshots with both start and end data.
+        """
+        if not hasattr(self, '_cluster_info_start') or self._cluster_info_start is None:
+            self.logger.debug('Skipping end cluster collection (no start collection)')
+            return
+
+        with progress_context(
+            "Collecting end cluster info...",
+            total=None,  # Indeterminate - spinner
+            logger=self.logger
+        ) as (update, set_desc):
+            if self._collection_method == 'ssh':
+                set_desc("Collecting via SSH...")
+                self._cluster_info_end = self._collect_via_ssh()
+            else:
+                set_desc("Collecting via MPI...")
+                self._cluster_info_end = self._collect_cluster_information()
+
+        if self._cluster_info_end:
+            self.logger.debug(f'Collected end cluster info via {self._collection_method}')
+
+        # Create ClusterSnapshots
+        self.cluster_snapshots = ClusterSnapshots(
+            start=self._cluster_info_start,
+            end=self._cluster_info_end,
+            collection_method=getattr(self, '_collection_method', 'unknown')
+        )
+
+        # Also set cluster_information to the start snapshot for backward compatibility
+        self.cluster_information = self._cluster_info_start
+
+    def _should_collect_timeseries(self) -> bool:
+        """Determine if time-series collection should be performed.
+
+        Returns:
+            True if time-series collection should be performed.
+        """
+        # Check if user explicitly disabled
+        if hasattr(self.args, 'skip_timeseries') and self.args.skip_timeseries:
+            return False
+
+        # Only collect for 'run' command
+        if hasattr(self.args, 'command') and self.args.command not in ('run',):
+            return False
+
+        # Skip in what-if mode
+        if hasattr(self.args, 'what_if') and self.args.what_if:
+            return False
+
+        return True
+
+    def _start_timeseries_collection(self) -> None:
+        """Start time-series collection in background.
+
+        Uses MultiHostTimeSeriesCollector if hosts specified,
+        otherwise uses single-host TimeSeriesCollector.
+
+        Collection runs in a background thread to minimize performance impact
+        on benchmark execution (HOST-05 requirement).
+        """
+        if not self._should_collect_timeseries():
+            self.logger.debug('Skipping time-series collection (disabled or not applicable)')
+            return
+
+        interval = getattr(self.args, 'timeseries_interval', 10.0)
+        max_samples = getattr(self.args, 'max_timeseries_samples', 3600)
+
+        try:
+            if hasattr(self.args, 'hosts') and self.args.hosts:
+                # Multi-host collection
+                ssh_username = getattr(self.args, 'ssh_username', None)
+                ssh_timeout = getattr(self.args, 'cluster_collection_timeout', 30)
+
+                self._timeseries_collector = MultiHostTimeSeriesCollector(
+                    hosts=self.args.hosts,
+                    interval_seconds=interval,
+                    max_samples=max_samples,
+                    ssh_username=ssh_username,
+                    ssh_timeout=ssh_timeout,
+                    logger=self.logger
+                )
+                self.logger.debug(
+                    f'Starting multi-host time-series collection ({len(self.args.hosts)} hosts, '
+                    f'interval={interval}s)'
+                )
+            else:
+                # Single-host collection (localhost only)
+                self._timeseries_collector = TimeSeriesCollector(
+                    interval_seconds=interval,
+                    max_samples=max_samples,
+                    logger=self.logger
+                )
+                self.logger.debug(
+                    f'Starting single-host time-series collection (interval={interval}s)'
+                )
+
+            self._timeseries_collector.start()
+
+        except Exception as e:
+            self.logger.warning(f'Failed to start time-series collection: {e}')
+            self._timeseries_collector = None
+
+    def _stop_timeseries_collection(self) -> None:
+        """Stop time-series collection and store results."""
+        if self._timeseries_collector is None:
+            return
+
+        try:
+            if isinstance(self._timeseries_collector, MultiHostTimeSeriesCollector):
+                samples_by_host = self._timeseries_collector.stop()
+                hosts_collected = self._timeseries_collector.get_hosts_with_data()
+
+                # Convert to TimeSeriesSample dataclasses
+                samples_by_host_typed = {}
+                total_samples = 0
+                for host, samples in samples_by_host.items():
+                    samples_by_host_typed[host] = [
+                        TimeSeriesSample.from_dict(s) for s in samples
+                    ]
+                    total_samples += len(samples)
+
+                self._timeseries_data = TimeSeriesData(
+                    collection_interval_seconds=self._timeseries_collector.interval_seconds,
+                    start_time=self._timeseries_collector.start_time or '',
+                    end_time=self._timeseries_collector.end_time or '',
+                    num_samples=total_samples,
+                    samples_by_host=samples_by_host_typed,
+                    collection_method='ssh' if len(hosts_collected) > 1 else 'local',
+                    hosts_requested=list(self._timeseries_collector.hosts),
+                    hosts_collected=hosts_collected,
+                )
+
+            else:
+                # Single-host TimeSeriesCollector
+                samples = self._timeseries_collector.stop()
+                hostname = samples[0]['hostname'] if samples else 'localhost'
+
+                samples_typed = [TimeSeriesSample.from_dict(s) for s in samples]
+
+                self._timeseries_data = TimeSeriesData(
+                    collection_interval_seconds=self._timeseries_collector.interval_seconds,
+                    start_time=self._timeseries_collector.start_time or '',
+                    end_time=self._timeseries_collector.end_time or '',
+                    num_samples=len(samples),
+                    samples_by_host={hostname: samples_typed},
+                    collection_method='local',
+                    hosts_requested=[hostname],
+                    hosts_collected=[hostname] if samples else [],
+                )
+
+            self.logger.debug(
+                f'Time-series collection complete ({self._timeseries_data.num_samples} samples)'
+            )
+
+        except Exception as e:
+            self.logger.warning(f'Failed to stop time-series collection: {e}')
+            self._timeseries_data = None
+
+    def write_timeseries_data(self) -> None:
+        """Write time-series data to JSON file.
+
+        Output file follows naming convention: {benchmark_type}_{datetime}_timeseries.json
+        This ensures the file is discoverable alongside other benchmark output files
+        (HOST-04 requirement).
+        """
+        if self._timeseries_data is None:
+            return
+
+        try:
+            with open(self.timeseries_file_path, 'w') as f:
+                json.dump(self._timeseries_data.to_dict(), f, indent=2, cls=MLPSJsonEncoder)
+            self.logger.verbose(f'Time-series data saved to: {self.timeseries_filename}')
+        except Exception as e:
+            self.logger.warning(f'Failed to write time-series data: {e}')
+
     def generate_output_location(self) -> str:
         """Generate the output directory path for this benchmark run.
 
@@ -527,18 +837,75 @@ class Benchmark(BenchmarkInterface, abc.ABC):
         """
         raise NotImplementedError
 
+    def _validate_environment(self) -> None:
+        """Validate environment before benchmark execution.
+
+        Called early in run() to catch configuration issues before
+        any work is done. Subclasses can override to add benchmark-
+        specific validation.
+
+        Note: Primary environment validation is done in main.py via
+        validate_benchmark_environment() BEFORE benchmark instantiation.
+        This hook is for benchmark-specific validation that requires
+        the benchmark instance to exist.
+
+        Raises:
+            DependencyError: If required dependencies are missing.
+            ConfigurationError: If configuration is invalid.
+        """
+        # Environment validation is primarily done in main.py before
+        # benchmark instantiation. This hook allows subclasses to add
+        # benchmark-specific validation if needed.
+        pass
+
     def run(self) -> int:
         """Execute the benchmark and track runtime.
 
-        Wraps _run() with timing measurement. Updates self.runtime
-        with the execution duration in seconds.
+        Wraps _run() with timing measurement, cluster collection, and
+        time-series collection. Shows stage indicators during execution.
+
+        Collects cluster information at start and end of benchmark
+        (HOST-03 requirement).
+
+        Collects time-series data during benchmark execution using a
+        background thread to minimize performance impact (HOST-04, HOST-05).
 
         Returns:
             Exit code from _run().
         """
-        start_time = time.time()
-        result = self._run()
-        self.runtime = time.time() - start_time
+        stages = [
+            "Validating environment...",
+            "Collecting cluster info...",
+            "Running benchmark...",
+            "Processing results...",
+        ]
+
+        with create_stage_progress(stages, logger=self.logger) as advance_stage:
+            # Stage 1: Validation
+            self._validate_environment()
+            advance_stage()
+
+            # Stage 2: Cluster collection
+            self._collect_cluster_start()
+            self._start_timeseries_collection()
+            advance_stage()
+
+            # Stage 3: Benchmark execution
+            # Note: Stage progress remains visible showing elapsed time
+            # during this phase. DLIO output flows through directly.
+            start_time = time.time()
+            try:
+                result = self._run()
+            finally:
+                self.runtime = time.time() - start_time
+                advance_stage()
+
+                # Stage 4: Cleanup/Processing
+                self._stop_timeseries_collection()
+                self._collect_cluster_end()
+                self.write_timeseries_data()
+                advance_stage()
+
         return result
 
 

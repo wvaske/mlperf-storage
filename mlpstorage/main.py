@@ -18,7 +18,7 @@ from mlpstorage.config import HISTFILE, DATETIME_STR, EXIT_CODE, DEFAULT_RESULTS
 from mlpstorage.debug import debugger_hook, MLPS_DEBUG
 from mlpstorage.history import HistoryTracker
 from mlpstorage.mlps_logging import setup_logging, apply_logging_options
-from mlpstorage.reporting import ReportGenerator
+from mlpstorage.report_generator import ReportGenerator
 from mlpstorage.errors import (
     MLPStorageException,
     ConfigurationError,
@@ -30,6 +30,16 @@ from mlpstorage.errors import (
     ErrorCode,
 )
 from mlpstorage.error_messages import format_error, ErrorFormatter
+from mlpstorage.lockfile import (
+    generate_lockfile,
+    generate_lockfiles_for_project,
+    validate_lockfile,
+    format_validation_report,
+    LockfileGenerationError,
+    GenerationOptions,
+)
+from mlpstorage.validation_helpers import validate_benchmark_environment
+from mlpstorage.progress import progress_context
 
 logger = setup_logging("MLPerfStorage")
 signal_received = False
@@ -52,6 +62,80 @@ def signal_handler(sig, frame):
         sys.exit(EXIT_CODE.INTERRUPTED)
 
 
+def handle_lockfile_command(args) -> int:
+    """Handle lockfile generate/verify commands.
+
+    Args:
+        args: Parsed command line arguments.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    if args.lockfile_command == "generate":
+        try:
+            with progress_context(
+                "Generating lockfile...",
+                total=None,
+                logger=logger
+            ) as (update, set_desc):
+                if args.generate_all:
+                    # Generate both base and full lockfiles
+                    set_desc("Generating lockfiles...")
+                    results = generate_lockfiles_for_project(args.pyproject)
+                    for name, path in results.items():
+                        logger.status(f"Generated {name} lockfile: {path}")
+                    return EXIT_CODE.SUCCESS
+                else:
+                    # Generate single lockfile
+                    options = GenerationOptions(
+                        output_path=args.output,
+                        extras=args.extras,
+                        generate_hashes=args.hashes,
+                        python_version=args.python_version or "",
+                    )
+                    set_desc(f"Generating lockfile: {args.output}")
+                    _, path = generate_lockfile(args.pyproject, options)
+                    logger.status(f"Generated lockfile: {path}")
+                    return EXIT_CODE.SUCCESS
+        except LockfileGenerationError as e:
+            logger.error(f"Lockfile generation failed: {e}")
+            if e.stderr:
+                logger.debug(f"stderr: {e.stderr}")
+            return EXIT_CODE.FAILURE
+        except FileNotFoundError as e:
+            logger.error(str(e))
+            return EXIT_CODE.FAILURE
+
+    elif args.lockfile_command == "verify":
+        with progress_context(
+            "Verifying lockfile...",
+            total=None,
+            logger=logger
+        ) as (update, set_desc):
+            try:
+                skip = set(args.skip_packages) if args.skip_packages else None
+                result = validate_lockfile(
+                    args.lockfile,
+                    skip_packages=skip,
+                    fail_on_missing=not args.allow_missing,
+                )
+
+                # Print report
+                report = format_validation_report(result)
+                if result.valid:
+                    logger.status(report)
+                    return EXIT_CODE.SUCCESS
+                else:
+                    logger.error(report)
+                    return EXIT_CODE.FAILURE
+            except FileNotFoundError:
+                logger.error(f"Lockfile not found: {args.lockfile}")
+                logger.info("Generate a lockfile with: mlpstorage lockfile generate")
+                return EXIT_CODE.FAILURE
+
+    return EXIT_CODE.FAILURE
+
+
 def run_benchmark(args, run_datetime):
     """
     Run a benchmark based on the provided args.
@@ -68,6 +152,47 @@ def run_benchmark(args, run_datetime):
         BenchmarkExecutionError: If benchmark execution fails.
     """
     from mlpstorage.benchmarks import KVCacheBenchmark
+
+    # Validate lockfile if requested
+    if hasattr(args, 'verify_lockfile') and args.verify_lockfile:
+        with progress_context(
+            "Validating packages against lockfile...",
+            total=None,
+            logger=logger
+        ) as (update, set_desc):
+            try:
+                result = validate_lockfile(args.verify_lockfile, fail_on_missing=False)
+                if not result.valid:
+                    report = format_validation_report(result)
+                    logger.error("Package version mismatch detected:")
+                    logger.error(report)
+                    logger.error("")
+                    logger.error("To fix, run one of:")
+                    logger.error(f"  pip install -r {args.verify_lockfile}")
+                    logger.error("  uv pip sync " + args.verify_lockfile)
+                    logger.error("")
+                    logger.error("Or run without lockfile validation:")
+                    logger.error(f"  {' '.join(sys.argv).replace('--verify-lockfile ' + args.verify_lockfile, '').strip()}")
+                    return EXIT_CODE.FAILURE
+                logger.status(f"Package validation passed ({result.matched} packages verified)")
+            except FileNotFoundError:
+                logger.error(f"Lockfile not found: {args.verify_lockfile}")
+                logger.error("Generate a lockfile with: mlpstorage lockfile generate")
+                return EXIT_CODE.FAILURE
+
+    # Fail-fast environment validation (unless skipped)
+    # This validates dependencies, SSH connectivity, paths, etc. BEFORE benchmark instantiation
+    skip_validation = getattr(args, 'skip_validation', False)
+    if not skip_validation:
+        with progress_context(
+            "Validating environment...",
+            total=None,
+            logger=logger
+        ) as (update, set_desc):
+            # Errors from validation will propagate after progress cleanup
+            validate_benchmark_environment(args, logger=logger)
+    else:
+        logger.warning("Skipping environment validation (--skip-validation flag)")
 
     program_switch_dict = dict(
         training=TrainingBenchmark,
@@ -160,6 +285,9 @@ def _main_impl():
         else:
             # If handle_history_command returned an exit code, return it
             return new_args
+
+    if args.program == "lockfile":
+        return handle_lockfile_command(args)
 
     if args.program == "reports":
         results_dir = args.results_dir if hasattr(args, 'results_dir') else DEFAULT_RESULTS_DIR

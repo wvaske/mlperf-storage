@@ -10,7 +10,7 @@ import json
 import os
 import yaml
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 from mlpstorage.config import BENCHMARK_TYPES, PARAM_VALIDATION, HYDRA_OUTPUT_SUBDIR
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from mlpstorage.rules.issues import Issue
 
 
-@dataclass
+@dataclass(frozen=True)
 class RunID:
     """Identifier for a benchmark run."""
     program: str
@@ -282,6 +282,141 @@ class HostInfo:
             result['system'] = self.system.to_dict()
 
         return result
+
+
+@dataclass
+class ClusterSnapshots:
+    """Cluster information snapshots from benchmark start and end.
+
+    Captures cluster state at two points during benchmark execution:
+    - start: Collected immediately before benchmark execution begins
+    - end: Collected immediately after benchmark execution completes
+
+    This allows analysis of system state changes during the benchmark,
+    such as memory pressure, I/O statistics delta, and load changes.
+
+    Attributes:
+        start: ClusterInformation collected at benchmark start
+        end: ClusterInformation collected at benchmark end (may be None if not yet collected)
+        collection_method: Method used for collection ('mpi', 'ssh', 'local')
+    """
+    start: 'ClusterInformation'
+    end: Optional['ClusterInformation'] = None
+    collection_method: str = 'unknown'
+
+    def as_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'start': self.start.as_dict() if self.start else None,
+            'end': self.end.as_dict() if self.end else None,
+            'collection_method': self.collection_method,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], logger) -> Optional['ClusterSnapshots']:
+        """Create ClusterSnapshots from a dictionary.
+
+        Args:
+            data: Dictionary containing cluster snapshot data.
+            logger: Logger instance for ClusterInformation reconstruction.
+
+        Returns:
+            ClusterSnapshots instance if data is valid, None otherwise.
+        """
+        if data is None:
+            return None
+
+        start_data = data.get('start')
+        end_data = data.get('end')
+
+        start = ClusterInformation.from_dict(start_data, logger) if start_data else None
+        end = ClusterInformation.from_dict(end_data, logger) if end_data else None
+
+        if start is None:
+            return None
+
+        return cls(
+            start=start,
+            end=end,
+            collection_method=data.get('collection_method', 'unknown')
+        )
+
+
+@dataclass
+class TimeSeriesSample:
+    """Single time-series sample from one host.
+
+    Contains dynamic metrics that change over time during benchmark execution.
+    Static information (cpuinfo, os_release) is excluded as it doesn't change.
+    """
+    timestamp: str  # ISO format YYYY-MM-DDTHH:MM:SSZ
+    hostname: str
+    diskstats: Optional[List[Dict[str, Any]]] = None  # List of disk stat dicts
+    vmstat: Optional[Dict[str, int]] = None  # vmstat key-value pairs
+    meminfo: Optional[Dict[str, int]] = None  # meminfo key-value pairs
+    loadavg: Optional[Dict[str, float]] = None  # load average data
+    netdev: Optional[List[Dict[str, Any]]] = None  # network interface stats
+    errors: Optional[Dict[str, str]] = None  # any collection errors
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary, excluding None values."""
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TimeSeriesSample':
+        """Create instance from dictionary."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class TimeSeriesData:
+    """Complete time-series collection for a benchmark run.
+
+    Aggregates all samples collected during benchmark execution,
+    organized by host with collection metadata.
+    """
+    collection_interval_seconds: float
+    start_time: str  # ISO format
+    end_time: str  # ISO format (set when collection stops)
+    num_samples: int
+    samples_by_host: Dict[str, List[TimeSeriesSample]]
+    collection_method: str  # 'local', 'ssh'
+    hosts_requested: List[str]
+    hosts_collected: List[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'collection_interval_seconds': self.collection_interval_seconds,
+            'start_time': self.start_time,
+            'end_time': self.end_time,
+            'num_samples': self.num_samples,
+            'samples_by_host': {
+                host: [s.to_dict() for s in samples]
+                for host, samples in self.samples_by_host.items()
+            },
+            'collection_method': self.collection_method,
+            'hosts_requested': self.hosts_requested,
+            'hosts_collected': self.hosts_collected,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TimeSeriesData':
+        """Create instance from dictionary."""
+        samples_by_host = {}
+        for host, samples in data.get('samples_by_host', {}).items():
+            samples_by_host[host] = [TimeSeriesSample.from_dict(s) for s in samples]
+
+        return cls(
+            collection_interval_seconds=data.get('collection_interval_seconds', 10.0),
+            start_time=data.get('start_time', ''),
+            end_time=data.get('end_time', ''),
+            num_samples=data.get('num_samples', 0),
+            samples_by_host=samples_by_host,
+            collection_method=data.get('collection_method', 'unknown'),
+            hosts_requested=data.get('hosts_requested', []),
+            hosts_collected=data.get('hosts_collected', []),
+        )
 
 
 class ClusterInformation:
