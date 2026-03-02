@@ -4,14 +4,14 @@
 
 **Core Value:** Orchestrate multiple benchmark types (training, checkpointing, kv-cache, vectordb) across distributed systems and produce verified, rules-compliant results.
 
-**Current Focus:** Phase 11 - Comprehensive Parquet Support
+**Current Focus:** Phase 12 - DLRM Dataset Columns
 
 ## Current Position
 
-**Phase:** 11 of 11 - Comprehensive Parquet Support
-**Plan:** All complete
-**Status:** Phase complete
-**Last activity:** 2026-02-02 - Completed Phase 11 (Comprehensive Parquet Support)
+**Phase:** 12 of 12 - DLRM Dataset Columns
+**Plan:** Not yet planned (CONTEXT.md written)
+**Status:** Discussion complete, ready for planning
+**Last activity:** 2026-02-25 - Completed Phase 12 discussion, wrote CONTEXT.md
 
 **Progress:**
 ```
@@ -26,7 +26,8 @@ Phase 8:  [##########] 100% (2/2 plans) COMPLETE
 Phase 9:  [##########] 100% (2/2 plans) COMPLETE
 Phase 10: [##########] 100% (3/3 plans) COMPLETE
 Phase 11: [##########] 100% (3/3 plans) COMPLETE
-Overall:  [##########] 100% (35/35 plans complete)
+Phase 12: [          ]   0% (0/? plans) CONTEXT WRITTEN
+Overall:  [#########-]  97% (35/35 + Phase 12 pending)
 ```
 
 ## Performance Metrics
@@ -269,26 +270,27 @@ None currently.
 ## Session Continuity
 
 ### Last Session
-- **Date:** 2026-02-02
-- **Accomplished:** Completed 11-02 (Parquet Reader/Generator Rewrite)
-- **Next:** Execute 11-03 plan
+- **Date:** 2026-02-25
+- **Accomplished:** Completed Phase 12 discussion, wrote CONTEXT.md for 12-dlrm-dataset-columns
+- **Next:** Plan phase 12 (existing PLAN-01.md needs revision to match CONTEXT.md locked decisions)
 
 ### Context for Next Session
-- **MILESTONE COMPLETE:** All 10 phases executed and verified
-  - Phase 10: Progress Indication COMPLETE
-    - 10-01: Progress Indication Foundation - Rich library, TTY detection
-    - 10-02: Benchmark Progress Integration - Stage indicators, spinners
-    - 10-03: Main.py Integration - Environment/lockfile progress (human verified)
-- All 21 v3.0 requirements delivered
-- All 32 plans executed
+- Phase 12: DLRM Dataset Columns — CONTEXT.md written, ready for planning
+  - Key locked decisions:
+    - 200 columns with mixed dtypes (int8, float16, float32, float64)
+    - 40 read columns randomly distributed (not grouped), totaling exactly 160 bytes
+    - Scalar PyArrow types for size=1 (not FixedSizeListArray)
+    - Default size=1 in DLIO generator/reader when not specified
+    - Omit `size: 1` from config files for compactness
+    - E2E verification required (generate + read back)
+  - Existing PLAN-01.md needs revision to incorporate these constraints
 - User setup tasks remain (from previous phases):
   - Fork argonne-lcf/dlio_benchmark to personal GitHub
   - Push parquet-support branch to fork
   - Update pyproject.toml with fork URL
 - Note: vectordb and kvcache not yet wired into cli_parser.py (minor CLI wiring)
 - Note: Pre-existing test failures in test_rules_calculations.py and test_reporting.py (unrelated)
-- Ready for milestone audit or archival
 
 ---
 
-*State updated: 2026-01-25*
+*State updated: 2026-02-25*
